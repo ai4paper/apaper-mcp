@@ -2,10 +2,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-export function buildPingText(message?: string): string {
-  return message ? `pong: ${message}` : "pong";
-}
-
 const server = new McpServer({
   name: "apaper-mcp",
   version: "0.1.0",
@@ -23,22 +19,20 @@ server.registerTool(
   async ({ message }) => ({
     content: [
       {
-        type: "text" as const,
-        text: buildPingText(message),
+        type: "text",
+        text: message ? `pong: ${message}` : "pong",
       },
     ],
   }),
 );
 
-export async function main(): Promise<void> {
+async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("apaper-mcp running on stdio");
 }
 
-if (import.meta.main) {
-  main().catch((error: unknown) => {
-    console.error("Fatal error in main():", error);
-    process.exit(1);
-  });
-}
+main().catch((error) => {
+  console.error("Fatal error in main():", error);
+  process.exit(1);
+});

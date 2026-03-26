@@ -5,6 +5,7 @@ Minimal MCP server starter built with Bun and TypeScript.
 ## Requirements
 
 - Bun
+- Node.js
 - GitHub CLI (`gh`) for publishing
 
 ## Install
@@ -20,18 +21,6 @@ bun run dev
 ```
 
 The server logs `apaper-mcp running on stdio` to stderr when it starts.
-
-## Test
-
-```bash
-bun test
-```
-
-## Typecheck
-
-```bash
-bun run typecheck
-```
 
 ## Build
 

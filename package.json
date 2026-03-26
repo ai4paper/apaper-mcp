@@ -1,6 +1,6 @@
 {
   "name": "@ai4paper/apaper-mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Academic paper research MCP server built with Bun and TypeScript.",
   "type": "module",
   "main": "dist/index.js",

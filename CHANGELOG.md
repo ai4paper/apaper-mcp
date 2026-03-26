@@ -6,6 +6,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-03-26
+
+### Added
+
+- Test release to verify tag-triggered GitHub Actions publishing now that the workflow is active. (@isomoes)
+
 ## [0.1.1] - 2026-03-26
 
 ### Added

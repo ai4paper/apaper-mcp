@@ -6,13 +6,17 @@
   "scripts": {
     "dev": "bun run src/index.ts",
     "build": "bun build src/index.ts --outdir dist --target node",
-    "start": "bun dist/index.js"
+    "start": "bun dist/index.js",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.27.1",
+    "node-html-parser": "latest",
     "zod": "latest"
   },
   "devDependencies": {
+    "@types/bun": "latest",
     "typescript": "latest",
     "@types/node": "latest"
   }

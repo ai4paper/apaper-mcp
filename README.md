@@ -10,6 +10,14 @@ Academic paper research MCP server built with Bun and TypeScript.
 
 ## Install
 
+From npm:
+
+```bash
+npm install -g @ai4paper/apaper-mcp
+```
+
+From source:
+
 ```bash
 bun install
 ```

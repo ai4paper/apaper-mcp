@@ -1,15 +1,36 @@
 {
-  "name": "apaper-mcp",
+  "name": "@ai4paper/apaper-mcp",
   "version": "0.1.0",
-  "private": true,
+  "description": "Academic paper research MCP server built with Bun and TypeScript.",
   "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "apaper-mcp": "bin/apaper-mcp.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "dev": "bun run src/index.ts",
     "build": "bun build src/index.ts --outdir dist --target node",
     "start": "bun dist/index.js",
+    "prepack": "bun run build",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ai4paper/apaper-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ai4paper/apaper-mcp/issues"
+  },
+  "homepage": "https://github.com/ai4paper/apaper-mcp#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.27.1",
     "node-html-parser": "latest",

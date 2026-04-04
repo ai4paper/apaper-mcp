@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "isomoes-writing": {
+      "source": "isomoes/skills",
+      "sourceType": "github",
+      "computedHash": "448d3deed21ef69ad2d7fe94a03de1f44a3fe13034586a6350ab51f4effe0d61"
+    }
+  }
+}

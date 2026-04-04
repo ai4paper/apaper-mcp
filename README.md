@@ -22,6 +22,34 @@ From source:
 bun install
 ```
 
+## MCP client config
+
+Example MCP configuration:
+
+```json
+{
+  "mcp": {
+    "apaper-mcp": {
+      "type": "local",
+      "command": ["npx", "@ai4paper/apaper-mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+This lets an MCP-compatible client start `apaper-mcp` locally over stdio.
+
+## Use cases
+
+`apaper-mcp` is useful when you want an AI client to help with paper research and early writing tasks such as:
+
+- searching papers across IACR, DBLP, and Google Scholar
+- narrowing results by year or venue
+- collecting BibTeX entries for references
+- downloading IACR PDFs for reading and note-taking
+- building a literature base before outlining or drafting
+
 ## Development
 
 ```bash

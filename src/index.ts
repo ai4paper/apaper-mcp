@@ -3,10 +3,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import * as z from "zod/v4";
 
 import {
+  formatCnkiSearchResponse,
   formatDblpSearchResponse,
   formatGoogleScholarSearchResponse,
   formatIacrSearchResponse,
 } from "./formatters.js";
+import { downloadCnkiPaper, searchCnkiPapers } from "./platforms/cnki.js";
 import { searchDblpPublications } from "./platforms/dblp.js";
 import { searchGoogleScholarPapers } from "./platforms/googleScholar.js";
 import { downloadIacrPaperPdf, searchIacrPapers } from "./platforms/iacr.js";
@@ -174,6 +176,52 @@ server.registerTool<any, any>(
       }
 
       return asTextResult(`Error searching Google Scholar: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  },
+);
+
+server.registerTool<any, any>(
+  "search_cnki_papers",
+  {
+    title: "Search CNKI Papers",
+    description:
+      "Search papers from CNKI (中国知网) by subject keyword. Requires CNKI access via IP-based institutional login (handled automatically on whitelisted networks).",
+    inputSchema: {
+      query: z.string(),
+      page_num: z.number().int().positive().default(1),
+      page_size: z.number().int().positive().max(100).default(20),
+    } as any,
+  },
+  async (args: any) => {
+    try {
+      const papers = await searchCnkiPapers(args.query, {
+        pageNum: args.page_num,
+        pageSize: args.page_size,
+      });
+      return asTextResult(formatCnkiSearchResponse(papers, args.query));
+    } catch (error) {
+      return asTextResult(`Error searching CNKI papers: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  },
+);
+
+server.registerTool<any, any>(
+  "download_cnki_paper",
+  {
+    title: "Download CNKI Paper",
+    description:
+      "Download the PDF for a CNKI paper, given the `href` field returned by search_cnki_papers. Saves to save_path using the publisher-supplied filename.",
+    inputSchema: {
+      href: z.string(),
+      save_path: z.string().default("./downloads"),
+    } as any,
+  },
+  async (args: any) => {
+    try {
+      const fullPath = await downloadCnkiPaper(args.href, args.save_path);
+      return asTextResult(`PDF downloaded successfully to: ${fullPath}`);
+    } catch (error) {
+      return asTextResult(`Error downloading CNKI paper: ${error instanceof Error ? error.message : String(error)}`);
     }
   },
 );

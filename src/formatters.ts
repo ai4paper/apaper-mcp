@@ -1,4 +1,4 @@
-import type { DblpBibtexResult, DblpPublication, Paper } from "./types.js";
+import type { CnkiPaper, DblpBibtexResult, DblpPublication, Paper } from "./types.js";
 
 function buildYearFilterMessage(min?: number, max?: number): string {
   if (min === undefined && max === undefined) {
@@ -168,6 +168,30 @@ export function formatGoogleScholarSearchResponse(
       lines.push(`   - Abstract: ${paper.abstract}`);
     }
 
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+export function formatCnkiSearchResponse(papers: CnkiPaper[], query: string): string {
+  if (papers.length === 0) {
+    return `No CNKI papers found for query: ${query}`;
+  }
+
+  const lines = [`Found ${papers.length} CNKI papers for query '${query}':`, ""];
+
+  for (const [index, paper] of papers.entries()) {
+    lines.push(`${index + 1}. **${paper.title || "Untitled"}**`);
+    if (paper.authors.length > 0) {
+      lines.push(`   - Authors: ${paper.authors.join(", ")}`);
+    }
+    if (paper.source) {
+      lines.push(`   - Source: ${paper.source}`);
+    }
+    if (paper.href) {
+      lines.push(`   - URL: ${paper.href}`);
+    }
     lines.push("");
   }
 

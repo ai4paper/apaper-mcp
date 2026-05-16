@@ -33,3 +33,11 @@ export interface DblpBibtexResult {
   dblpKey: string;
   bibtex: string;
 }
+
+export interface CnkiPaper {
+  title: string;
+  authors: string[];
+  source: string;
+  sourceLink: string;
+  href: string;
+}

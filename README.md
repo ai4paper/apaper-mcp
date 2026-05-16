@@ -96,6 +96,17 @@ bun run start
 - `search_google_scholar_papers`
   - input: `{ "query": string, "max_results"?: number, "year_low"?: number | string, "year_high"?: number | string }`
   - output: formatted Google Scholar search results
+- `search_cnki_papers`
+  - input: `{ "query": string, "page_num"?: number, "page_size"?: number }`
+  - output: formatted CNKI (中国知网) paper search results
+- `download_cnki_paper`
+  - input: `{ "href": string, "save_path"?: string }` (use an `href` from `search_cnki_papers`)
+  - output: saved PDF path
+
+The CNKI tools require institutional access to CNKI. On networks with IP-based
+access the server obtains a session cookie automatically via
+`login.cnki.net/TopLoginCore/api/loginapi/IpLoginFlushPo` on first use — no
+manual login or cookie pasting is needed.
 
 ## Local MCP testing
 

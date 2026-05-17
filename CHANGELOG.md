@@ -6,6 +6,18 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-05-17
+
+### Added
+
+- arXiv search support via the `search_arxiv_papers` tool, with category, date-range, and sort options. (@isomoes)
+- arXiv PDF download support via the `download_arxiv_paper` tool. (@isomoes)
+- `ARXIV_SEARCH_URL`, `ARXIV_ADVANCED_URL`, and `ARXIV_PDF_BASE` env overrides for routing arXiv traffic through a reachable mirror. (@isomoes)
+
+### Changed
+
+- arXiv search scrapes the `arxiv.org/search/` HTML page instead of `export.arxiv.org/api/query` so it works on networks where the Atom API endpoint is blocked or aggressively rate-limited. (@isomoes)
+
 ## [0.1.3] - 2026-05-16
 
 ### Added

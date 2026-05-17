@@ -34,6 +34,22 @@ export interface DblpBibtexResult {
   bibtex: string;
 }
 
+export interface ArxivPaper {
+  paperId: string;
+  title: string;
+  authors: string[];
+  abstract: string;
+  categories: string[];
+  primaryCategory: string;
+  publishedDate: string;
+  updatedDate: string;
+  pdfUrl: string;
+  url: string;
+  doi: string;
+  journalRef: string;
+  comment: string;
+}
+
 export interface CnkiPaper {
   title: string;
   authors: string[];

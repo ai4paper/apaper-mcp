@@ -1,12 +1,18 @@
 # apaper-mcp
 
-Academic paper research MCP server built with Bun and TypeScript.
+An MCP (Model Context Protocol) server that gives AI assistants direct access to academic paper databases. It exposes a unified set of tools for searching and downloading papers across IACR ePrint, DBLP, Google Scholar, and CNKI (中国知网), so an MCP-compatible client (Claude Code, Claude Desktop, or any other) can run literature searches, pull BibTeX entries, and fetch PDFs without leaving the chat.
 
-## Requirements
+## Tools
 
-- Bun
-- Node.js
-- GitHub CLI (`gh`) for publishing
+- `search_iacr_papers` — search IACR ePrint
+- `download_iacr_paper` — download an IACR PDF
+- `search_dblp_papers` — search DBLP, optionally with BibTeX
+- `search_google_scholar_papers` — search Google Scholar
+- `search_cnki_papers` — search CNKI (中国知网)
+- `download_cnki_paper` — download a CNKI PDF
+
+CNKI tools require institutional access. On IP-based networks the session
+cookie is obtained automatically on first use — no manual login needed.
 
 ## Install
 
@@ -16,15 +22,7 @@ From npm:
 npm install -g @ai4paper/apaper-mcp
 ```
 
-From source:
-
-```bash
-bun install
-```
-
 ## MCP client config
-
-Example MCP configuration:
 
 ```json
 {
@@ -38,94 +36,61 @@ Example MCP configuration:
 }
 ```
 
-This lets an MCP-compatible client start `apaper-mcp` locally over stdio.
-
 ## Use cases
 
-`apaper-mcp` is useful when you want an AI client to help with paper research and early writing tasks such as:
-
-- searching papers across IACR, DBLP, and Google Scholar
+- searching papers across arXiv, IACR, DBLP, Google Scholar, and CNKI
 - narrowing results by year or venue
 - collecting BibTeX entries for references
-- downloading IACR PDFs for reading and note-taking
+- downloading PDFs for reading and note-taking
 - building a literature base before outlining or drafting
 
-## Development
+<details>
+<summary>Development</summary>
+
+### Requirements
+
+- Bun
+- Node.js
+
+### Install from source
 
 ```bash
-bun run dev
+bun install
 ```
 
-The server logs `apaper-mcp running on stdio` to stderr when it starts.
-
-## Build
+### Dev / build / test
 
 ```bash
+bun run dev        # start server (logs to stderr on stdio)
 bun run build
-```
-
-## Test
-
-```bash
 bun run test
-```
-
-## Typecheck
-
-```bash
 bun run typecheck
+bun run start      # run built server
 ```
 
-## Run built server
+### Tool schemas
 
-```bash
-bun run start
-```
-
-## Tools
-
+- `search_arxiv_papers`
+  - input: `{ "query": string, "max_results"?: number, "date_from"?: string, "date_to"?: string, "categories"?: string[], "sort_by"?: "relevance" | "date" }`
+- `download_arxiv_paper`
+  - input: `{ "paper_id": string, "save_path"?: string }` (paper_id like `2103.12345` or `2103.12345v2`)
 - `search_iacr_papers`
   - input: `{ "query": string, "max_results"?: number, "fetch_details"?: boolean, "year_min"?: number | string, "year_max"?: number | string }`
-  - output: formatted IACR ePrint paper search results
 - `download_iacr_paper`
   - input: `{ "paper_id": string, "save_path"?: string }`
-  - output: saved PDF path or an error message
 - `search_dblp_papers`
   - input: `{ "query": string, "max_results"?: number, "year_from"?: number | string, "year_to"?: number | string, "venue_filter"?: string, "include_bibtex"?: boolean }`
-  - output: formatted DBLP publication results or BibTeX entries
 - `search_google_scholar_papers`
   - input: `{ "query": string, "max_results"?: number, "year_low"?: number | string, "year_high"?: number | string }`
-  - output: formatted Google Scholar search results
 - `search_cnki_papers`
   - input: `{ "query": string, "page_num"?: number, "page_size"?: number }`
-  - output: formatted CNKI (中国知网) paper search results
 - `download_cnki_paper`
   - input: `{ "href": string, "save_path"?: string }` (use an `href` from `search_cnki_papers`)
-  - output: saved PDF path
 
-The CNKI tools require institutional access to CNKI. On networks with IP-based
-access the server obtains a session cookie automatically via
-`login.cnki.net/TopLoginCore/api/loginapi/IpLoginFlushPo` on first use — no
-manual login or cookie pasting is needed.
-
-## Local MCP testing
-
-Start the server:
-
-```bash
-bun run dev
-```
-
-Then connect with an MCP inspector/client. One easy option is the MCP Inspector:
+### Local MCP testing
 
 ```bash
 npx @modelcontextprotocol/inspector bun run src/index.ts
 ```
 
-That lets you inspect the server, list tools, and call them locally over stdio.
-
-## Publish to GitHub
-
-```bash
-gh repo create ai4paper/apaper-mcp --public --source=. --remote=origin --push
-```
+</details>

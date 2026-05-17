@@ -1,4 +1,4 @@
-import type { CnkiPaper, DblpBibtexResult, DblpPublication, Paper } from "./types.js";
+import type { ArxivPaper, CnkiPaper, DblpBibtexResult, DblpPublication, Paper } from "./types.js";
 
 function buildYearFilterMessage(min?: number, max?: number): string {
   if (min === undefined && max === undefined) {
@@ -168,6 +168,74 @@ export function formatGoogleScholarSearchResponse(
       lines.push(`   - Abstract: ${paper.abstract}`);
     }
 
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+type ArxivFilterOptions = {
+  dateFrom?: string;
+  dateTo?: string;
+  categories?: string[];
+  sortBy?: "relevance" | "date";
+};
+
+function buildArxivFilterMessage(options: ArxivFilterOptions): string {
+  const filters: string[] = [];
+  if (options.dateFrom || options.dateTo) {
+    filters.push(`date range (${options.dateFrom ?? "earliest"} to ${options.dateTo ?? "latest"})`);
+  }
+  if (options.categories && options.categories.length > 0) {
+    filters.push(`categories [${options.categories.join(", ")}]`);
+  }
+  return filters.length > 0 ? ` with filters: ${filters.join(", ")}` : "";
+}
+
+export function formatArxivSearchResponse(
+  papers: ArxivPaper[],
+  query: string,
+  options: ArxivFilterOptions = {},
+): string {
+  if (papers.length === 0) {
+    return `No arXiv papers found for query: ${query}${buildArxivFilterMessage(options)}`;
+  }
+
+  const lines = [
+    `Found ${papers.length} arXiv papers for query '${query}'${buildArxivFilterMessage(options)}:`,
+    "",
+  ];
+
+  for (const [index, paper] of papers.entries()) {
+    lines.push(`${index + 1}. **${paper.title || "Untitled"}**`);
+    lines.push(`   - Paper ID: ${paper.paperId}`);
+    if (paper.authors.length > 0) {
+      lines.push(`   - Authors: ${paper.authors.join(", ")}`);
+    }
+    if (paper.primaryCategory) {
+      lines.push(`   - Primary Category: ${paper.primaryCategory}`);
+    }
+    if (paper.categories.length > 0) {
+      lines.push(`   - Categories: ${paper.categories.join(", ")}`);
+    }
+    if (paper.publishedDate) {
+      lines.push(`   - Published: ${paper.publishedDate}`);
+    }
+    if (paper.doi) {
+      lines.push(`   - DOI: ${paper.doi}`);
+    }
+    if (paper.journalRef) {
+      lines.push(`   - Journal Ref: ${paper.journalRef}`);
+    }
+    if (paper.url) {
+      lines.push(`   - URL: ${paper.url}`);
+    }
+    if (paper.pdfUrl) {
+      lines.push(`   - PDF: ${paper.pdfUrl}`);
+    }
+    if (paper.abstract) {
+      lines.push(`   - Abstract: ${paper.abstract}`);
+    }
     lines.push("");
   }
 

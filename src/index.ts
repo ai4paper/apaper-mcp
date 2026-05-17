@@ -3,11 +3,13 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import * as z from "zod/v4";
 
 import {
+  formatArxivSearchResponse,
   formatCnkiSearchResponse,
   formatDblpSearchResponse,
   formatGoogleScholarSearchResponse,
   formatIacrSearchResponse,
 } from "./formatters.js";
+import { downloadArxivPaper, searchArxivPapers } from "./platforms/arxiv.js";
 import { downloadCnkiPaper, searchCnkiPapers } from "./platforms/cnki.js";
 import { searchDblpPublications } from "./platforms/dblp.js";
 import { searchGoogleScholarPapers } from "./platforms/googleScholar.js";
@@ -222,6 +224,65 @@ server.registerTool<any, any>(
       return asTextResult(`PDF downloaded successfully to: ${fullPath}`);
     } catch (error) {
       return asTextResult(`Error downloading CNKI paper: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  },
+);
+
+server.registerTool<any, any>(
+  "search_arxiv_papers",
+  {
+    title: "Search arXiv Papers",
+    description:
+      "Search papers on arXiv. Supports field-specific queries (ti:, au:, abs:, cat:), boolean operators (AND, OR, ANDNOT), category filters, date ranges, and sorting by relevance or date. arXiv enforces a 3-second minimum between requests; the server rate-limits automatically.",
+    inputSchema: {
+      query: z.string(),
+      max_results: z.number().int().positive().max(50).default(10),
+      date_from: z.string().optional(),
+      date_to: z.string().optional(),
+      categories: z.array(z.string()).optional(),
+      sort_by: z.enum(["relevance", "date"]).default("relevance"),
+    } as any,
+  },
+  async (args: any) => {
+    try {
+      const papers = await searchArxivPapers(args.query, {
+        maxResults: args.max_results,
+        dateFrom: args.date_from,
+        dateTo: args.date_to,
+        categories: args.categories,
+        sortBy: args.sort_by,
+      });
+      return asTextResult(
+        formatArxivSearchResponse(papers, args.query, {
+          dateFrom: args.date_from,
+          dateTo: args.date_to,
+          categories: args.categories,
+          sortBy: args.sort_by,
+        }),
+      );
+    } catch (error) {
+      return asTextResult(`Error searching arXiv: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  },
+);
+
+server.registerTool<any, any>(
+  "download_arxiv_paper",
+  {
+    title: "Download arXiv Paper",
+    description:
+      "Download the PDF for an arXiv paper, given the arXiv ID (e.g. '2103.12345' or '2103.12345v2'). Saves to save_path as `arxiv_<id>.pdf`.",
+    inputSchema: {
+      paper_id: z.string(),
+      save_path: z.string().default("./downloads"),
+    } as any,
+  },
+  async (args: any) => {
+    try {
+      const fullPath = await downloadArxivPaper(args.paper_id, args.save_path);
+      return asTextResult(`PDF downloaded successfully to: ${fullPath}`);
+    } catch (error) {
+      return asTextResult(`Error downloading arXiv paper: ${error instanceof Error ? error.message : String(error)}`);
     }
   },
 );

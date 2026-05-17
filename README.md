@@ -1,15 +1,22 @@
 # apaper-mcp
 
-An MCP (Model Context Protocol) server that gives AI assistants direct access to academic paper databases. It exposes a unified set of tools for searching and downloading papers across IACR ePrint, DBLP, Google Scholar, and CNKI (中国知网), so an MCP-compatible client (Claude Code, Claude Desktop, or any other) can run literature searches, pull BibTeX entries, and fetch PDFs without leaving the chat.
+An MCP (Model Context Protocol) server that gives AI assistants direct access to academic paper databases. It exposes a unified set of tools for searching and downloading papers across arXiv, IACR ePrint, DBLP, Google Scholar, and CNKI (中国知网), so an MCP-compatible client (Claude Code, Claude Desktop, or any other) can run literature searches, pull BibTeX entries, and fetch PDFs without leaving the chat.
 
 ## Tools
 
+- `search_arxiv_papers` — search arXiv, with category, date-range, and sort options
+- `download_arxiv_paper` — download an arXiv PDF
 - `search_iacr_papers` — search IACR ePrint
 - `download_iacr_paper` — download an IACR PDF
 - `search_dblp_papers` — search DBLP, optionally with BibTeX
 - `search_google_scholar_papers` — search Google Scholar
 - `search_cnki_papers` — search CNKI (中国知网)
 - `download_cnki_paper` — download a CNKI PDF
+
+arXiv tools scrape the public `arxiv.org/search/` HTML page, which works on
+networks where the `export.arxiv.org` Atom API is blocked or rate-limited. If
+you need to route through a mirror, set `ARXIV_SEARCH_URL`,
+`ARXIV_ADVANCED_URL`, and/or `ARXIV_PDF_BASE`.
 
 CNKI tools require institutional access. On IP-based networks the session
 cookie is obtained automatically on first use — no manual login needed.
@@ -35,14 +42,6 @@ npm install -g @ai4paper/apaper-mcp
   }
 }
 ```
-
-## Use cases
-
-- searching papers across arXiv, IACR, DBLP, Google Scholar, and CNKI
-- narrowing results by year or venue
-- collecting BibTeX entries for references
-- downloading PDFs for reading and note-taking
-- building a literature base before outlining or drafting
 
 <details>
 <summary>Development</summary>

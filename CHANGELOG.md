@@ -6,6 +6,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-06-08
+
 ### Added
 
 - arXiv requests are throttled and retried on HTTP 429 / 5xx with exponential backoff honouring `Retry-After`; a persistent block reports the throttled IP and wait time. Tunable via `ARXIV_MIN_INTERVAL_MS`, `ARXIV_MAX_RETRIES`, `ARXIV_BACKOFF_BASE_MS`, `ARXIV_BACKOFF_MAX_MS`, `ARXIV_BACKOFF_JITTER_MS`, and `ARXIV_IP_ECHO_URL`. (#1, @isomoes)

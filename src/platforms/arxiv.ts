@@ -15,6 +15,31 @@ const USER_AGENT =
 const REQUEST_TIMEOUT_MS = Number(process.env.ARXIV_TIMEOUT_MS) || 60_000;
 const DOWNLOAD_TIMEOUT_MS = Number(process.env.ARXIV_DOWNLOAD_TIMEOUT_MS) || 120_000;
 
+function envInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+// Resilience config. Mirrors the throttle + retry/backoff behaviour of the
+// google-deepmind/science-skills HttpClient (the reference cited in issue #1):
+// a polite minimum gap between requests, then exponential backoff that honours
+// the server's Retry-After header. All knobs are overridable via env vars.
+const MIN_INTERVAL_MS = Math.max(0, envInt("ARXIV_MIN_INTERVAL_MS", 3_000));
+const MAX_RETRIES = Math.max(0, Math.floor(envInt("ARXIV_MAX_RETRIES", 3)));
+const BACKOFF = {
+  baseMs: Math.max(0, envInt("ARXIV_BACKOFF_BASE_MS", 3_000)),
+  maxMs: Math.max(0, envInt("ARXIV_BACKOFF_MAX_MS", 60_000)),
+  jitterMs: Math.max(0, envInt("ARXIV_BACKOFF_JITTER_MS", 500)),
+};
+// Service that echoes back the caller's public IP, queried only when arXiv
+// blocks us so the error can name the offending IP. Set to "" to disable.
+const ARXIV_IP_ECHO_URL = process.env.ARXIV_IP_ECHO_URL?.trim() ?? "https://api.ipify.org";
+// Transient HTTP statuses worth retrying — same set the reference treats as
+// retryable (rate limit + 5xx gateway/unavailable errors).
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+
 export type ArxivSortBy = "relevance" | "date";
 
 export interface ArxivSearchOptions {
@@ -259,40 +284,192 @@ function isTimeoutError(error: unknown): boolean {
   );
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function isRetryableStatus(status: number): boolean {
+  return RETRYABLE_STATUS.has(status);
+}
+
+/**
+ * Build a throttle that enforces a minimum gap between successive calls.
+ * Calls are serialised through a promise chain, so concurrent requests queue
+ * up and each waits its turn — the in-process analogue of the reference's
+ * cross-process file-lock rate limiter.
+ */
+export function createThrottle(minIntervalMs: number): () => Promise<void> {
+  let chain: Promise<void> = Promise.resolve();
+  let lastAt = 0;
+  return () => {
+    chain = chain.then(async () => {
+      const wait = lastAt + minIntervalMs - Date.now();
+      if (wait > 0) await sleep(wait);
+      lastAt = Date.now();
+    });
+    return chain;
+  };
+}
+
+const throttleArxiv = createThrottle(MIN_INTERVAL_MS);
+
+/**
+ * Exponential backoff (base * 2^attempt) capped at maxMs, never shorter than a
+ * server-supplied Retry-After, plus uniform jitter. Matches the reference's
+ * `_compute_backoff`. `rand` is injectable so the jitter is testable.
+ */
+export function computeBackoffMs(
+  attempt: number,
+  retryAfterMs: number | null,
+  opts: { baseMs: number; maxMs: number; jitterMs: number },
+  rand: () => number = Math.random,
+): number {
+  let delay = opts.baseMs * 2 ** attempt;
+  if (retryAfterMs !== null) delay = Math.max(delay, retryAfterMs);
+  if (opts.jitterMs > 0) delay += rand() * opts.jitterMs;
+  // Cap last so maxMs stays a hard ceiling even after jitter is added.
+  return Math.min(delay, opts.maxMs);
+}
+
+/**
+ * Parse a `Retry-After` header into milliseconds. Supports both RFC 7231
+ * forms: delta-seconds (`120`) and an HTTP-date. Returns null when absent or
+ * unparseable. `now` is injectable for deterministic date-based tests.
+ */
+export function parseRetryAfterMs(headers: Headers, now: number = Date.now()): number | null {
+  const value = headers.get("retry-after")?.trim();
+  if (!value) return null;
+  // delta-seconds form is an unsigned integer per RFC 7231 §7.1.3. Reject
+  // signed/fractional/exponent shapes ("-120", "1.5", "1e10") instead of
+  // letting Number() coerce them into a negative or absurd delay.
+  if (/^\d+$/.test(value)) return Number(value) * 1000;
+  // Otherwise treat it as an HTTP-date. Every RFC 7231 date form contains
+  // spaces (e.g. "Mon, 31 Mar 2026 15:10:00 GMT"); requiring one keeps junk
+  // like "1e10" and bare ISO dates out of Date.parse's lenient grasp.
+  if (value.includes(" ")) {
+    const dateMs = Date.parse(value);
+    if (!Number.isNaN(dateMs)) return Math.max(0, dateMs - now);
+  }
+  return null;
+}
+
+/**
+ * Whether `text` is shaped like an IPv4 dotted-quad or an IPv6 address. Used to
+ * keep a stray HTML error page (or other junk from the echo service) out of the
+ * user-facing message. Structural only — it does not range-check octets.
+ */
+export function looksLikeIp(text: string): boolean {
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(text)) return true;
+  return text.includes(":") && /^[0-9a-fA-F:]{2,45}$/.test(text);
+}
+
+/**
+ * Ask an external echo service for our public egress IP, so a rate-limit error
+ * can name the blocked address. Best-effort: returns null on any failure (the
+ * service being down must never mask the original arXiv error).
+ */
+async function getEgressIp(): Promise<string | null> {
+  if (!ARXIV_IP_ECHO_URL) return null;
+  try {
+    const response = await fetch(ARXIV_IP_ECHO_URL, { signal: AbortSignal.timeout(5_000) });
+    if (!response.ok) return null;
+    const text = (await response.text()).trim();
+    return looksLikeIp(text) ? text : null;
+  } catch {
+    return null;
+  }
+}
+
+async function buildRateLimitMessage(
+  status: number,
+  retryAfterMs: number | null,
+  requests: number,
+): Promise<string> {
+  const ip = await getEgressIp();
+  const who = ip ? `this IP (${ip})` : "this IP";
+  const wait =
+    retryAfterMs !== null
+      ? `arXiv asks you to wait ${Math.ceil(retryAfterMs / 1000)}s (Retry-After header)`
+      : "Wait a minute";
+  return (
+    `arXiv is rate-limiting ${who} (HTTP ${status}) after ${requests} ` +
+    `request${requests === 1 ? "" : "s"}. ${wait} before retrying.`
+  );
+}
+
+interface ArxivFetchOptions {
+  timeoutMs: number;
+  headers?: Record<string, string>;
+  redirect?: RequestRedirect;
+  failLabel: string;
+  timeoutMessage: (timeoutMs: number, url: string) => string;
+}
+
+/**
+ * Shared arXiv fetch: throttles, then retries transient failures (429/5xx and
+ * network errors) with exponential backoff that honours Retry-After. Gives up
+ * early when the server's Retry-After exceeds our per-wait cap (no point
+ * spinning to exhaust retries on a multi-minute block) and reports the blocked
+ * IP. Returns the successful Response; the caller reads its body.
+ */
+async function arxivFetch(url: string, opts: ArxivFetchOptions): Promise<Response> {
+  const headers: Record<string, string> = { "User-Agent": USER_AGENT, ...(opts.headers ?? {}) };
+
+  for (let attempt = 0; ; attempt++) {
+    await throttleArxiv();
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers,
+        redirect: opts.redirect ?? "follow",
+        signal: AbortSignal.timeout(opts.timeoutMs),
+      });
+    } catch (error) {
+      // Treat timeouts/network errors as transient and retry, like the reference.
+      if (isTimeoutError(error)) {
+        if (attempt < MAX_RETRIES) {
+          await sleep(computeBackoffMs(attempt, null, BACKOFF));
+          continue;
+        }
+        throw new Error(opts.timeoutMessage(opts.timeoutMs, url));
+      }
+      throw error;
+    }
+
+    if (response.ok) return response;
+
+    if (isRetryableStatus(response.status)) {
+      const retryAfterMs = parseRetryAfterMs(response.headers);
+      const serverWantsTooLong = retryAfterMs !== null && retryAfterMs > BACKOFF.maxMs;
+      if (attempt < MAX_RETRIES && !serverWantsTooLong) {
+        await sleep(computeBackoffMs(attempt, retryAfterMs, BACKOFF));
+        continue;
+      }
+      throw new Error(await buildRateLimitMessage(response.status, retryAfterMs, attempt + 1));
+    }
+
+    throw new Error(`${opts.failLabel} failed: HTTP ${response.status}`);
+  }
+}
+
 export async function searchArxivPapers(
   query: string,
   options: ArxivSearchOptions = {},
 ): Promise<ArxivPaper[]> {
   const url = buildArxivSearchUrl(query, options);
 
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      headers: {
-        "User-Agent": USER_AGENT,
-        Accept: "text/html,application/xhtml+xml",
-        "Accept-Language": "en-US,en;q=0.9",
-      },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-  } catch (error) {
-    if (isTimeoutError(error)) {
-      throw new Error(
-        `arXiv request timed out after ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s contacting ${url}. ` +
-          "Confirm the URL is reachable from this process, or set ARXIV_SEARCH_URL / ARXIV_ADVANCED_URL to a reachable mirror.",
-      );
-    }
-    throw error;
-  }
-
-  if (response.status === 429 || response.status === 503) {
-    throw new Error(
-      `arXiv is rate limiting this IP (HTTP ${response.status}). Wait a minute before retrying.`,
-    );
-  }
-  if (!response.ok) {
-    throw new Error(`arXiv search failed: HTTP ${response.status}`);
-  }
+  const response = await arxivFetch(url, {
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    headers: {
+      Accept: "text/html,application/xhtml+xml",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+    failLabel: "arXiv search",
+    timeoutMessage: (timeoutMs, target) =>
+      `arXiv request timed out after ${Math.round(timeoutMs / 1000)}s contacting ${target}. ` +
+      "Confirm the URL is reachable from this process, or set ARXIV_SEARCH_URL / ARXIV_ADVANCED_URL to a reachable mirror.",
+  });
 
   const html = await response.text();
   const all = parseArxivSearchHtml(html);
@@ -310,31 +487,14 @@ export async function downloadArxivPaper(paperId: string, savePath = "./download
     throw new Error("paper_id is required");
   }
 
-  let response: Response;
-  try {
-    response = await fetch(`${ARXIV_PDF_BASE}/${cleanId}`, {
-      headers: { "User-Agent": USER_AGENT },
-      redirect: "follow",
-      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
-    });
-  } catch (error) {
-    if (isTimeoutError(error)) {
-      throw new Error(
-        `arXiv PDF download timed out after ${Math.round(DOWNLOAD_TIMEOUT_MS / 1000)}s. ` +
-          "Try again, raise ARXIV_DOWNLOAD_TIMEOUT_MS, or set ARXIV_PDF_BASE to a reachable mirror.",
-      );
-    }
-    throw error;
-  }
-
-  if (response.status === 429 || response.status === 503) {
-    throw new Error(
-      `arXiv is rate limiting this IP (HTTP ${response.status}). Wait a minute before retrying.`,
-    );
-  }
-  if (!response.ok) {
-    throw new Error(`PDF download failed: HTTP ${response.status}`);
-  }
+  const response = await arxivFetch(`${ARXIV_PDF_BASE}/${cleanId}`, {
+    timeoutMs: DOWNLOAD_TIMEOUT_MS,
+    redirect: "follow",
+    failLabel: "PDF download",
+    timeoutMessage: (timeoutMs) =>
+      `arXiv PDF download timed out after ${Math.round(timeoutMs / 1000)}s. ` +
+      "Try again, raise ARXIV_DOWNLOAD_TIMEOUT_MS, or set ARXIV_PDF_BASE to a reachable mirror.",
+  });
 
   const contentType = response.headers.get("content-type") ?? "";
   if (!contentType.includes("pdf")) {

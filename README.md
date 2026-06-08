@@ -18,6 +18,13 @@ networks where the `export.arxiv.org` Atom API is blocked or rate-limited. If
 you need to route through a mirror, set `ARXIV_SEARCH_URL`,
 `ARXIV_ADVANCED_URL`, and/or `ARXIV_PDF_BASE`.
 
+The arXiv tools throttle themselves and retry HTTP 429 / 5xx with exponential
+backoff, honouring `Retry-After`; on a persistent block the error names the
+throttled IP and wait time. Tune with `ARXIV_MIN_INTERVAL_MS` (`3000`),
+`ARXIV_MAX_RETRIES` (`3`), `ARXIV_BACKOFF_BASE_MS` (`3000`),
+`ARXIV_BACKOFF_MAX_MS` (`60000`), `ARXIV_BACKOFF_JITTER_MS` (`500`), and
+`ARXIV_IP_ECHO_URL` (`""` to disable the IP lookup).
+
 CNKI tools require institutional access. On IP-based networks the session
 cookie is obtained automatically on first use — no manual login needed.
 

@@ -233,7 +233,7 @@ server.registerTool<any, any>(
   {
     title: "Search arXiv Papers",
     description:
-      "Search papers on arXiv. Supports field-specific queries (ti:, au:, abs:, cat:), boolean operators (AND, OR, ANDNOT), category filters, date ranges, and sorting by relevance or date. arXiv enforces a 3-second minimum between requests; the server rate-limits automatically.",
+      "Search papers on arXiv. Supports field-specific queries (ti:, au:, abs:, cat:), boolean operators (AND, OR, ANDNOT), category filters, date ranges, and sorting by relevance or date. Requests are throttled to one every few seconds and automatically retried with backoff on rate-limit (HTTP 429) and transient errors; if arXiv keeps blocking, the error names the throttled IP and how long to wait.",
     inputSchema: {
       query: z.string(),
       max_results: z.number().int().positive().max(50).default(10),

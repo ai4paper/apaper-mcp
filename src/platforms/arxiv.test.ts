@@ -3,7 +3,12 @@ import { describe, expect, test } from "bun:test";
 import {
   buildArxivSearchParams,
   buildArxivSearchUrl,
+  computeBackoffMs,
+  createThrottle,
+  isRetryableStatus,
+  looksLikeIp,
   parseArxivSearchHtml,
+  parseRetryAfterMs,
 } from "./arxiv.js";
 
 describe("buildArxivSearchParams", () => {
@@ -140,5 +145,127 @@ describe("parseArxivSearchHtml", () => {
 
   test("returns empty array when no results are present", () => {
     expect(parseArxivSearchHtml("<html><body><p>No results.</p></body></html>")).toEqual([]);
+  });
+});
+
+describe("isRetryableStatus", () => {
+  test("treats 429 and 5xx gateway errors as retryable", () => {
+    for (const status of [429, 500, 502, 503, 504]) {
+      expect(isRetryableStatus(status)).toBe(true);
+    }
+  });
+
+  test("does not retry success or client errors other than 429", () => {
+    for (const status of [200, 301, 400, 403, 404, 410]) {
+      expect(isRetryableStatus(status)).toBe(false);
+    }
+  });
+});
+
+describe("parseRetryAfterMs", () => {
+  test("parses delta-seconds form", () => {
+    expect(parseRetryAfterMs(new Headers({ "retry-after": "120" }))).toBe(120_000);
+  });
+
+  test("parses HTTP-date form relative to now", () => {
+    const now = Date.parse("2026-03-31T15:08:00Z");
+    const ms = parseRetryAfterMs(new Headers({ "retry-after": "Mon, 31 Mar 2026 15:10:00 GMT" }), now);
+    expect(ms).toBe(120_000);
+  });
+
+  test("clamps a past HTTP-date to zero rather than going negative", () => {
+    const now = Date.parse("2026-03-31T15:10:00Z");
+    const ms = parseRetryAfterMs(new Headers({ "retry-after": "Mon, 31 Mar 2026 15:08:00 GMT" }), now);
+    expect(ms).toBe(0);
+  });
+
+  test("accepts a zero-second delay", () => {
+    expect(parseRetryAfterMs(new Headers({ "retry-after": "0" }))).toBe(0);
+  });
+
+  test("rejects non-integer delta-seconds rather than coercing them", () => {
+    // Negative would otherwise clamp to 0 ("retry now"); the others would
+    // coerce to absurd or fractional delays via Number().
+    expect(parseRetryAfterMs(new Headers({ "retry-after": "-120" }))).toBeNull();
+    expect(parseRetryAfterMs(new Headers({ "retry-after": "1e10" }))).toBeNull();
+    expect(parseRetryAfterMs(new Headers({ "retry-after": "1.5" }))).toBeNull();
+  });
+
+  test("returns null when the header is absent or unparseable", () => {
+    expect(parseRetryAfterMs(new Headers())).toBeNull();
+    expect(parseRetryAfterMs(new Headers({ "retry-after": "   " }))).toBeNull();
+    expect(parseRetryAfterMs(new Headers({ "retry-after": "soon" }))).toBeNull();
+  });
+});
+
+describe("looksLikeIp", () => {
+  test("accepts IPv4 and IPv6 addresses", () => {
+    expect(looksLikeIp("203.0.113.5")).toBe(true);
+    expect(looksLikeIp("2001:db8::1")).toBe(true);
+    expect(looksLikeIp("::1")).toBe(true);
+  });
+
+  test("rejects HTML error pages and other junk", () => {
+    expect(looksLikeIp("<!DOCTYPE html><html>Too Many Requests</html>")).toBe(false);
+    expect(looksLikeIp("a.b.c.d")).toBe(false);
+    expect(looksLikeIp("...")).toBe(false);
+    expect(looksLikeIp("")).toBe(false);
+  });
+});
+
+describe("computeBackoffMs", () => {
+  const opts = { baseMs: 3_000, maxMs: 60_000, jitterMs: 0 };
+
+  test("grows exponentially with the attempt number", () => {
+    expect(computeBackoffMs(0, null, opts)).toBe(3_000);
+    expect(computeBackoffMs(1, null, opts)).toBe(6_000);
+    expect(computeBackoffMs(2, null, opts)).toBe(12_000);
+  });
+
+  test("caps the delay at maxMs", () => {
+    expect(computeBackoffMs(10, null, opts)).toBe(60_000);
+  });
+
+  test("keeps the cap hard even when jitter is added", () => {
+    const jittered = { baseMs: 3_000, maxMs: 60_000, jitterMs: 500 };
+    expect(computeBackoffMs(10, null, jittered, () => 1)).toBeLessThanOrEqual(60_000);
+  });
+
+  test("never waits less than the server's Retry-After", () => {
+    expect(computeBackoffMs(0, 30_000, opts)).toBe(30_000);
+  });
+
+  test("still caps a long Retry-After at maxMs", () => {
+    expect(computeBackoffMs(0, 600_000, opts)).toBe(60_000);
+  });
+
+  test("adds bounded jitter using the injected RNG", () => {
+    const jittered = { baseMs: 3_000, maxMs: 60_000, jitterMs: 500 };
+    expect(computeBackoffMs(0, null, jittered, () => 0)).toBe(3_000);
+    expect(computeBackoffMs(0, null, jittered, () => 1)).toBe(3_500);
+  });
+});
+
+describe("createThrottle", () => {
+  test("spaces successive calls by at least the minimum interval", async () => {
+    const throttle = createThrottle(40);
+    const start = Date.now();
+    await throttle();
+    await throttle();
+    await throttle();
+    // Three calls => two gaps of >=40ms each (the first call is immediate).
+    expect(Date.now() - start).toBeGreaterThanOrEqual(75);
+  });
+
+  test("serialises concurrent callers instead of releasing them at once", async () => {
+    const throttle = createThrottle(30);
+    const stamps: number[] = [];
+    const start = Date.now();
+    await Promise.all(
+      [0, 1, 2].map(() => throttle().then(() => stamps.push(Date.now() - start))),
+    );
+    stamps.sort((a, b) => a - b);
+    expect(stamps[1]! - stamps[0]!).toBeGreaterThanOrEqual(20);
+    expect(stamps[2]! - stamps[1]!).toBeGreaterThanOrEqual(20);
   });
 });

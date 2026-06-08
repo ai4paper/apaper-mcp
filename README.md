@@ -4,14 +4,16 @@ An MCP (Model Context Protocol) server that gives AI assistants direct access to
 
 ## Tools
 
-- `search_arxiv_papers` — search arXiv, with category, date-range, and sort options
-- `download_arxiv_paper` — download an arXiv PDF
-- `search_iacr_papers` — search IACR ePrint
-- `download_iacr_paper` — download an IACR PDF
-- `search_dblp_papers` — search DBLP, optionally with BibTeX
-- `search_google_scholar_papers` — search Google Scholar
-- `search_cnki_papers` — search CNKI (中国知网)
-- `download_cnki_paper` — download a CNKI PDF
+| Tool | Source | Description |
+| --- | --- | --- |
+| `search_arxiv_papers` | arXiv | Search with category, date-range, and sort options |
+| `download_arxiv_paper` | arXiv | Download a PDF |
+| `search_iacr_papers` | IACR ePrint | Search the ePrint archive |
+| `download_iacr_paper` | IACR ePrint | Download a PDF |
+| `search_dblp_papers` | DBLP | Search, optionally with BibTeX |
+| `search_google_scholar_papers` | Google Scholar | Search |
+| `search_cnki_papers` | CNKI (中国知网) | Search |
+| `download_cnki_paper` | CNKI (中国知网) | Download a PDF |
 
 arXiv tools scrape the public `arxiv.org/search/` HTML page, which works on
 networks where the `export.arxiv.org` Atom API is blocked or rate-limited. If

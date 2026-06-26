@@ -14,6 +14,7 @@ import { downloadCnkiPaper, searchCnkiPapers } from "./platforms/cnki.js";
 import { searchDblpPublications } from "./platforms/dblp.js";
 import { searchGoogleScholarPapers } from "./platforms/googleScholar.js";
 import { downloadIacrPaperPdf, searchIacrPapers } from "./platforms/iacr.js";
+import { installProxy } from "./proxy.js";
 
 const server = new McpServer({
   name: "apaper-mcp",
@@ -288,6 +289,11 @@ server.registerTool<any, any>(
 );
 
 async function main() {
+  // If SPIDER_PROXY is set, route every outbound request through it before any
+  // tool can fire. Must run before server.connect so the patched fetch is in
+  // place for the first request.
+  await installProxy();
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("apaper-mcp running on stdio");

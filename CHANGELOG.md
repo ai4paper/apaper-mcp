@@ -6,6 +6,15 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+### Added
+
+- `SPIDER_PROXY` env var routes outbound requests (arXiv, IACR, DBLP, Google Scholar, and PDF downloads) through a proxy. CNKI is excluded because it authenticates by institutional IP. Accepts `socks5`/`socks4`/`http`/`https` URLs in both the standard `scheme://user:pass@host:port` form and the colon-delimited `scheme://host:port:user:pass` form (e.g. Kookeey), on both the Node and Bun runtimes (under Bun, SOCKS is tunnelled via a local HTTP→SOCKS bridge). Idempotent requests are retried on transient proxy connection failures, and if the proxy is set but invalid or can't be initialised, requests are blocked rather than sent direct so the real IP never leaks.
+- IACR per-request timeouts are configurable via `IACR_TIMEOUT_MS` (default `30000`) and `IACR_DOWNLOAD_TIMEOUT_MS` (default `60000`), raised from the previous fixed 15s/30s to tolerate slow proxies.
+
+### Fixed
+
+- IACR requests now detect Cloudflare's bot challenge (which intermittently blocks downloads/searches) and report it with an actionable message and the URL to open in a browser, instead of an opaque `HTTP 403` — and never save a challenge HTML page as a `.pdf`. Requests also send browser-like headers (full User-Agent, `Accept`, `Referer`).
+
 ## [0.1.5] - 2026-06-08
 
 ### Added

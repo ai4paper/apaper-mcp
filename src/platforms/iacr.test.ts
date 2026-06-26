@@ -2,9 +2,30 @@ import { describe, expect, test } from "bun:test";
 
 import {
   buildIacrSearchParams,
+  isCloudflareChallenge,
   parseIacrDetailHtml,
   parseIacrSearchHtml,
 } from "./iacr.js";
+
+describe("isCloudflareChallenge", () => {
+  const make = (status: number, headers: Record<string, string>) => new Response("body", { status, headers });
+
+  test("detects the cf-mitigated challenge header", () => {
+    expect(isCloudflareChallenge(make(403, { "cf-mitigated": "challenge" }))).toBe(true);
+  });
+
+  test("detects a Cloudflare 403/503 HTML block page", () => {
+    expect(
+      isCloudflareChallenge(make(403, { server: "cloudflare", "content-type": "text/html; charset=UTF-8" })),
+    ).toBe(true);
+    expect(isCloudflareChallenge(make(503, { server: "cloudflare", "content-type": "text/html" }))).toBe(true);
+  });
+
+  test("does not flag a normal PDF response or an ordinary 404", () => {
+    expect(isCloudflareChallenge(make(200, { server: "cloudflare", "content-type": "application/pdf" }))).toBe(false);
+    expect(isCloudflareChallenge(make(404, { server: "nginx", "content-type": "text/html" }))).toBe(false);
+  });
+});
 
 describe("buildIacrSearchParams", () => {
   test("builds search params with optional year bounds", () => {

@@ -1,7 +1,12 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { parse, type HTMLElement } from "node-html-parser/dist/index.js";
 
+import { directFetch as fetch } from "../proxy.js";
 import type { CnkiPaper } from "../types.js";
+
+// CNKI authenticates by institutional IP, so it must bypass SPIDER_PROXY and
+// keep this host's real egress IP. Importing the un-proxied fetch as `fetch`
+// shadows the global for this whole module, so every request below goes direct.
 
 const CNKI_SEARCH_URL = "https://kns.cnki.net/kns8s/brief/grid";
 const CNKI_LOGIN_URL = "https://login.cnki.net/TopLoginCore/api/loginapi/IpLoginFlushPo";

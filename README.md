@@ -30,6 +30,39 @@ throttled IP and wait time. Tune with `ARXIV_MIN_INTERVAL_MS` (`3000`),
 CNKI tools require institutional access. On IP-based networks the session
 cookie is obtained automatically on first use — no manual login needed.
 
+IACR ePrint sits behind Cloudflare, which intermittently serves a JS bot
+challenge that automated HTTP clients can't solve — most often on PDF downloads.
+Search keeps working; when a download is challenged the tool reports it clearly
+(rather than saving the challenge page) and gives you the URL to fetch in a
+browser. This is server-side and unrelated to any proxy.
+
+## Proxy
+
+Set `SPIDER_PROXY` to route outbound requests — arXiv, IACR, DBLP, Google
+Scholar, and their PDF downloads — through a proxy. CNKI is excluded on purpose:
+it authenticates by institutional IP and always uses this host's real address.
+Both a standard URL and the colon-delimited form some mobile-proxy providers
+hand out are accepted:
+
+```bash
+SPIDER_PROXY="socks5://user:pass@host:1086"   # standard
+SPIDER_PROXY="socks5://host:1086:user:pass"   # host:port:user:pass (e.g. Kookeey)
+SPIDER_PROXY="http://user:pass@host:8080"     # HTTP CONNECT proxy
+```
+
+`socks5`, `socks4`, `http`, and `https` schemes are supported (the scheme
+defaults to `http` when omitted) on both the Node (published binary) and Bun
+(`dev`/`start`) runtimes. The scheme must match the proxy's port — a SOCKS port
+won't accept `http://` and vice versa. If `SPIDER_PROXY` is set but invalid or
+can't be initialised, requests are blocked rather than sent direct, so a
+misconfigured proxy never leaks this host's real IP.
+
+Flaky residential/mobile proxies routinely drop or refuse connections;
+idempotent (GET) requests through the proxy are retried automatically on such
+transient failures. IACR fires the most requests per search (a detail fetch per
+result), so its per-request timeouts default high for slow proxies — tune with
+`IACR_TIMEOUT_MS` (`30000`) and `IACR_DOWNLOAD_TIMEOUT_MS` (`60000`).
+
 ## Install
 
 From npm:

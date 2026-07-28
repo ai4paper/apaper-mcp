@@ -1,9 +1,10 @@
-node_modules/
-dist/
 .DS_Store
+node_modules/
 *.log
 .idea/
 .vscode/
-*.tsbuildinfo
+__pycache__/
+.pytest_cache/
+.venv/
 /downloads
 /.claude/worktrees

@@ -1,4 +1,4 @@
-name: Release and Publish to npm
+name: Release and Publish to PyPI
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to publish (e.g. v0.1.2)"
+        description: "Tag to publish (e.g. v0.2.1)"
         required: true
         type: string
 
@@ -23,15 +23,15 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
         with:
-          bun-version: 1.3.10
+          enable-cache: true
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          node-version: 20
+          python-version: "3.12"
 
       - name: Resolve tag name
         id: tag
@@ -42,34 +42,28 @@ jobs:
             echo "tag_name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Verify package version matches tag
+      - name: Verify project version matches tag
         run: |
-          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          PROJECT_VERSION=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
           TAG_NAME="${{ steps.tag.outputs.tag_name }}"
-          EXPECTED_TAG="v${PACKAGE_VERSION}"
+          EXPECTED_TAG="v${PROJECT_VERSION}"
 
           if [ "$TAG_NAME" != "$EXPECTED_TAG" ]; then
-            echo "Tag ${TAG_NAME} does not match package version ${PACKAGE_VERSION}"
+            echo "Tag ${TAG_NAME} does not match project version ${PROJECT_VERSION}"
             exit 1
           fi
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+      - name: Run tests
+        run: uv run pytest
 
       - name: Build package
-        run: bun run build
+        run: uv build
 
-      - name: Prepare artifact directory
-        run: mkdir -p dist-artifacts
-
-      - name: Pack npm artifact
-        run: npm pack --pack-destination dist-artifacts
-
-      - name: Upload npm artifact
+      - name: Upload package artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: npm-package
-          path: dist-artifacts/*.tgz
+          name: python-package
+          path: dist/*
 
   publish:
     needs: build
@@ -79,37 +73,16 @@ jobs:
       id-token: write
 
     steps:
-      - name: Download npm artifact
+      - name: Download package artifacts
         uses: actions/download-artifact@v4
         with:
-          name: npm-package
-          path: dist-artifacts/
+          name: python-package
+          path: dist/
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Publish package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          node-version: 24
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Publish package to npm
-        run: |
-          unset NODE_AUTH_TOKEN
-          unset NPM_TOKEN
-
-          set -- dist-artifacts/*.tgz
-
-          if [ "$1" = "dist-artifacts/*.tgz" ]; then
-            echo "No npm tarball found in dist-artifacts/"
-            exit 1
-          fi
-
-          if [ -n "$2" ]; then
-            echo "Expected exactly one npm tarball in dist-artifacts/, found multiple"
-            printf '%s\n' "$@"
-            exit 1
-          fi
-
-          npm publish "./$1" --provenance
+          packages-dir: dist/
 
   create-release:
     needs: publish
@@ -122,11 +95,11 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
 
-      - name: Download npm artifact
+      - name: Download package artifacts
         uses: actions/download-artifact@v4
         with:
-          name: npm-package
-          path: dist-artifacts/
+          name: python-package
+          path: dist/
 
       - name: Resolve tag name
         id: tag
@@ -161,4 +134,4 @@ jobs:
           prerelease: false
           body_path: RELEASE_NOTES.md
           files: |
-            dist-artifacts/*.tgz
+            dist/*

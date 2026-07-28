@@ -1,11 +1,11 @@
 # Release Prompt
 
-Use this prompt when preparing a local release for `@ai4paper/apaper-mcp`.
+Use this prompt when preparing a local release for `apaper-mcp`.
 
 ## Prompt
 
 ```md
-Prepare a local release for `@ai4paper/apaper-mcp`.
+Prepare a local release for `apaper-mcp`.
 
 Release target: `v<version>`
 Release date: `<YYYY-MM-DD>`
@@ -19,15 +19,15 @@ Do the following in order:
    - ensure each bullet ends with `(@<username>)`
    - keep the entries concise and release-focused
 
-2. Update `package.json`:
-   - set `version` to `<version>`
-   - keep package name as `@ai4paper/apaper-mcp`
+2. Update `pyproject.toml`:
+   - set `[project].version` to `<version>`
 
-3. Update `bun.lock` so it reflects the current package version and dependency state.
+3. Update `uv.lock` so it reflects the current project version and dependency state:
+   - run `uv lock`
 
 4. Verify the release locally:
-   - run `bun run build`
-   - run `npm pack --dry-run`
+   - run `uv run pytest`
+   - run `uv build`
 
 5. Commit the release changes with a release-style commit message.
 

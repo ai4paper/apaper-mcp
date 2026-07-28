@@ -2,7 +2,7 @@
 
 `apaper-mcp` is an MCP server for one very practical job: supporting paper work inside the conversation. Today that starts with paper discovery, but the larger direction is a more complete academic writing server where an AI client can search literature, collect references, organize source material, and assist with drafting around the same workflow. Instead of wiring separate scripts to different research sites, this project packages focused research tools behind a single Model Context Protocol interface.
 
-The project is built with **Bun**, **TypeScript**, and the official **Model Context Protocol SDK**. It runs over stdio, which makes it easy to plug into MCP-compatible clients and local inspection tools. The current implementation focuses on three common sources: **IACR ePrint**, **DBLP**, and **Google Scholar**.
+The project is built with **Python** and the official **Model Context Protocol SDK**. It runs over stdio, which makes it easy to plug into MCP-compatible clients and local inspection tools. The current implementation supports **arXiv**, **IACR ePrint**, **DBLP**, **Google Scholar**, and **CNKI**.
 
 ## Why this project exists
 
@@ -36,7 +36,7 @@ One simple local configuration looks like this:
   "mcp": {
     "apaper-mcp": {
       "type": "local",
-      "command": ["npx", "@ai4paper/apaper-mcp"],
+      "command": ["uv", "run", "--directory", "/path/to/apaper-mcp", "apaper-mcp"],
       "enabled": true
     }
   }
@@ -56,7 +56,7 @@ In practice, that means an assistant can use `apaper-mcp` to:
 
 ## How it is put together
 
-The codebase keeps the implementation intentionally direct. The MCP entrypoint lives in `src/index.ts`, where each tool is registered with a Zod-based input schema and a small amount of argument normalization for integer-like year fields. Platform-specific fetching and parsing live in separate modules under `src/platforms/`, which keeps the transport layer and the scraping/API logic from bleeding into each other.
+The codebase keeps the implementation intentionally direct. The MCP entrypoint lives in `src/apaper_mcp/server.py`, where each tool is registered with the Python MCP SDK. Platform-specific fetching and parsing live in separate modules under `src/apaper_mcp/`, which keeps the transport layer and the scraping/API logic from bleeding into each other.
 
 That split also reflects the nature of the supported sources:
 

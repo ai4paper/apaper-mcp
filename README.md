@@ -51,11 +51,11 @@ SPIDER_PROXY="http://user:pass@host:8080"     # HTTP CONNECT proxy
 ```
 
 `socks5`, `socks4`, `http`, and `https` schemes are supported (the scheme
-defaults to `http` when omitted) on both the Node (published binary) and Bun
-(`dev`/`start`) runtimes. The scheme must match the proxy's port — a SOCKS port
-won't accept `http://` and vice versa. If `SPIDER_PROXY` is set but invalid or
-can't be initialised, requests are blocked rather than sent direct, so a
-misconfigured proxy never leaks this host's real IP.
+defaults to `http` when omitted) by the Python runtime. The scheme must match
+the proxy's port — a SOCKS port won't accept `http://` and vice versa. If
+`SPIDER_PROXY` is set but invalid or can't be initialised, requests are blocked
+rather than sent direct, so a misconfigured proxy never leaks this host's real
+IP.
 
 Flaky residential/mobile proxies routinely drop or refuse connections;
 idempotent (GET) requests through the proxy are retried automatically on such
@@ -63,51 +63,63 @@ transient failures. IACR fires the most requests per search (a detail fetch per
 result), so its per-request timeouts default high for slow proxies — tune with
 `IACR_TIMEOUT_MS` (`30000`) and `IACR_DOWNLOAD_TIMEOUT_MS` (`60000`).
 
-## Install
+## Install (Python)
 
-From npm:
+The maintained runtime is now Python 3.12+ and is managed with `uv`:
 
 ```bash
-npm install -g @ai4paper/apaper-mcp
+uv sync
+uv run apaper-mcp
+# Equivalent module entry point:
+uv run python -m apaper_mcp
 ```
 
-## MCP client config
+For an MCP client, use the project executable (or an installed `apaper-mcp`)
+as the local stdio command:
 
 ```json
 {
   "mcp": {
     "apaper-mcp": {
       "type": "local",
-      "command": ["npx", "@ai4paper/apaper-mcp"],
+      "command": ["uv", "run", "--directory", "/path/to/apaper-mcp", "apaper-mcp"],
       "enabled": true
     }
   }
 }
 ```
 
-<details>
-<summary>Development</summary>
+Run tests with `uv run pytest`.
 
-### Requirements
+The Python source uses a standard `src` package layout. Platform-specific
+clients live under `src/apaper_mcp/platforms/`, while shared server, proxy,
+formatter, and model code stays in `src/apaper_mcp/`.
 
-- Bun
-- Node.js
+### Local MCP testing
 
-### Install from source
-
-```bash
-bun install
-```
-
-### Dev / build / test
+Start the MCP Inspector against the Python stdio server:
 
 ```bash
-bun run dev        # start server (logs to stderr on stdio)
-bun run build
-bun run test
-bun run typecheck
-bun run start      # run built server
+npx @modelcontextprotocol/inspector uv run --directory . apaper-mcp
 ```
+
+The equivalent module command is:
+
+```bash
+npx @modelcontextprotocol/inspector \
+  uv run --directory . python -m apaper_mcp
+```
+
+To pass the proxy to the inspected server:
+
+```bash
+npx @modelcontextprotocol/inspector \
+  -e SPIDER_PROXY="$SPIDER_PROXY" \
+  uv run --directory . apaper-mcp
+```
+
+The Inspector opens a local web UI for listing tools, inspecting schemas, and
+calling tools.
 
 ### Tool schemas
 
@@ -127,11 +139,3 @@ bun run start      # run built server
   - input: `{ "query": string, "page_num"?: number, "page_size"?: number }`
 - `download_cnki_paper`
   - input: `{ "href": string, "save_path"?: string }` (use an `href` from `search_cnki_papers`)
-
-### Local MCP testing
-
-```bash
-npx @modelcontextprotocol/inspector bun run src/index.ts
-```
-
-</details>

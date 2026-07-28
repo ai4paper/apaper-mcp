@@ -63,30 +63,43 @@ transient failures. IACR fires the most requests per search (a detail fetch per
 result), so its per-request timeouts default high for slow proxies — tune with
 `IACR_TIMEOUT_MS` (`30000`) and `IACR_DOWNLOAD_TIMEOUT_MS` (`60000`).
 
-## Install (Python)
+## Install from PyPI
 
-The maintained runtime is now Python 3.12+ and is managed with `uv`:
+The maintained runtime requires Python 3.12+. Run the published package
+directly with `uvx`:
 
 ```bash
-uv sync
-uv run apaper-mcp
-# Equivalent module entry point:
-uv run python -m apaper_mcp
+uvx apaper-mcp
 ```
 
-For an MCP client, use the project executable (or an installed `apaper-mcp`)
-as the local stdio command:
+To install the command for repeated use:
+
+```bash
+uv tool install apaper-mcp
+apaper-mcp
+```
+
+For an MCP client, use the published package as the local stdio command:
 
 ```json
 {
   "mcp": {
     "apaper-mcp": {
       "type": "local",
-      "command": ["uv", "run", "--directory", "/path/to/apaper-mcp", "apaper-mcp"],
+      "command": ["uvx", "apaper-mcp"],
       "enabled": true
     }
   }
 }
+```
+
+## Development
+
+Clone the repository and install its development dependencies with `uv`:
+
+```bash
+uv sync
+uv run apaper-mcp
 ```
 
 Run tests with `uv run pytest`.

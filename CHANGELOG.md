@@ -6,6 +6,18 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-28
+
+### Added
+
+- Python 3.12+ package with `uv` project management and an `apaper-mcp` console entry point. (@isomoes)
+- PyPI publishing workflow with GitHub Actions Trusted Publishing support. (@isomoes)
+- MIT license and complete package metadata for distribution on PyPI. (@isomoes)
+
+### Removed
+
+- Legacy TypeScript, Bun, and npm implementation and release artifacts. (@isomoes)
+
 ## [0.2.0] - 2026-06-26
 
 ### Added

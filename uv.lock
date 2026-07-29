@@ -50,7 +50,7 @@ dev = [
 requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.12" },
     { name = "httpx", extras = ["socks"], specifier = ">=0.27" },
-    { name = "mcp", specifier = ">=1.12" },
+    { name = "mcp", specifier = ">=1.12,<2" },
     { name = "seleniumbase", specifier = ">=4.0" },
 ]
 

@@ -1,6 +1,6 @@
 [project]
 name = "apaper-mcp"
-version = "0.3.1"
+version = "0.3.2"
 description = "Academic paper research MCP server"
 readme = "README.md"
 license = "MIT"

@@ -6,6 +6,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-07-29
+
+### Fixed
+
+- Constrain the MCP SDK to v1 so fresh `uvx` installs use the compatible `FastMCP` API. (@isomoes)
+
 ## [0.3.1] - 2026-07-29
 
 ### Fixed

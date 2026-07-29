@@ -1,11 +1,11 @@
 # Release Prompt
 
-Use this prompt when preparing a local release for `apaper-mcp`.
+Use this prompt when preparing and publishing a release for `apaper-mcp`.
 
 ## Prompt
 
 ```md
-Prepare a local release for `apaper-mcp`.
+Prepare and publish a release for `apaper-mcp`.
 
 Release target: `v<version>`
 Release date: `<YYYY-MM-DD>`
@@ -33,11 +33,13 @@ Do the following in order:
 
 6. Create a git tag named `v<version>`.
 
-7. Report:
+7. Push the release commit and tag to `origin`:
+   - push the current branch and `v<version>` atomically
+
+8. Report:
    - the version released
    - the commit hash
    - the tag name
+   - the pushed branch and remote
    - any verification results
-
-Do not push unless explicitly asked.
 ```

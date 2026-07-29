@@ -6,6 +6,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-29
+
+### Fixed
+
+- IACR PDF downloads now use SeleniumBase to pass Cloudflare challenges and save valid PDFs. (@isomoes)
+
 ## [0.3.0] - 2026-07-28
 
 ### Added

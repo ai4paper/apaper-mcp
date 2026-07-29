@@ -1,5 +1,11 @@
 from datetime import datetime, timezone
+import os
+from pathlib import Path
+import shutil
+import sys
+import time
 from urllib.parse import urlencode
+
 from bs4 import BeautifulSoup
 
 
@@ -20,6 +26,91 @@ def is_cloudflare_challenge(response) -> bool:
         and "cloudflare" in response.headers.get("server", "").lower()
         and "text/html" in response.headers.get("content-type", "")
     )
+
+
+def _download_pdf_with_browser(browser, pdf_url: str, target: Path) -> None:
+    download_dir = Path(browser.get_browser_downloads_folder())
+    before = {
+        name: (path.stat().st_mtime_ns, path.stat().st_size)
+        for name in browser.get_downloaded_files(browser=True)
+        if (path := download_dir / name).is_file()
+    }
+    browser.open(pdf_url)
+    deadline = time.monotonic() + float(os.getenv("IACR_DOWNLOAD_WAIT", "10"))
+    while time.monotonic() < deadline:
+        for name in browser.get_downloaded_files(browser=True):
+            path = download_dir / name
+            if not path.is_file() or path.suffix.lower() != ".pdf":
+                continue
+            state = (path.stat().st_mtime_ns, path.stat().st_size)
+            if before.get(name) != state and path.read_bytes()[:4] == b"%PDF":
+                shutil.copyfile(path, target)
+                return
+        browser.sleep(1)
+    raise TimeoutError("Browser did not download the IACR PDF")
+
+
+def _pass_cloudflare_challenge(browser, pdf_url: str) -> None:
+    indicators = (
+        "turnstile",
+        "challenges.cloudflare",
+        "just a moment",
+        "verify you are human",
+        "checking your browser",
+        "cf-browser-verification",
+        "cf-challenge",
+    )
+    reconnect_time = float(os.getenv("IACR_RECONNECT_TIME", "5"))
+    timeout = time.monotonic() + float(os.getenv("IACR_CHALLENGE_WAIT", "60"))
+    browser.uc_open_with_reconnect(pdf_url, reconnect_time=reconnect_time)
+    while time.monotonic() < timeout:
+        cookies = {
+            cookie.get("name"): cookie.get("value") for cookie in browser.get_cookies()
+        }
+        if cookies.get("cf_clearance"):
+            return
+        page_source = browser.get_page_source().lower()
+        if not any(indicator in page_source for indicator in indicators):
+            return
+        try:
+            browser.uc_gui_handle_captcha()
+        except Exception:
+            browser.uc_gui_click_captcha()
+        browser.sleep(3)
+    raise TimeoutError("Cloudflare challenge did not complete")
+
+
+def download_iacr_pdf(pdf_url: str, target: Path, browser_factory=None) -> None:
+    """Use SeleniumBase UC mode to pass IACR's challenge and save a PDF."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if browser_factory is None:
+        from seleniumbase import SB
+
+        browser_factory = SB
+
+    browser_options = {
+        "uc": True,
+        "test": True,
+        "locale": "en",
+        "external_pdf": True,
+    }
+    if sys.platform.startswith("linux") and not os.environ.get("DISPLAY"):
+        browser_options["xvfb"] = True
+        browser_options["chromium_arg"] = "ozone-platform=x11"
+    else:
+        browser_options["headed"] = True
+    attempts = int(os.getenv("IACR_CAPTCHA_ATTEMPTS", "2"))
+
+    for attempt in range(attempts):
+        target.unlink(missing_ok=True)
+        with browser_factory(**browser_options) as browser:
+            _pass_cloudflare_challenge(browser, pdf_url)
+            _download_pdf_with_browser(browser, pdf_url, target)
+            if target.is_file() and target.read_bytes()[:4] == b"%PDF":
+                return
+
+    if not target.is_file() or target.read_bytes()[:4] != b"%PDF":
+        raise ValueError("SeleniumBase did not download a valid PDF")
 
 
 def _paper(**kwargs):

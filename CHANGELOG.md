@@ -6,6 +6,16 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-07-29
+
+### Changed
+
+- Release instructions now publish the release commit and tag atomically. (@isomoes)
+
+### Fixed
+
+- IACR downloads return completed PDFs before MCP timeouts while browser cleanup continues safely. (@isomoes)
+
 ## [0.3.2] - 2026-07-29
 
 ### Fixed

@@ -28,19 +28,11 @@ def test_arxiv_retries_proxy_timeout(monkeypatch) -> None:
     assert calls == 2
 
 
-def test_iacr_download_uses_seleniumbase_for_cloudflare(monkeypatch, tmp_path) -> None:
-    response = httpx.Response(
-        403,
-        headers={
-            "cf-mitigated": "challenge",
-            "content-type": "text/html",
-        },
-        request=httpx.Request("GET", "https://eprint.iacr.org/2025/1.pdf"),
-    )
+def test_iacr_download_uses_seleniumbase_directly(monkeypatch, tmp_path) -> None:
     calls = []
 
     async def fake_get(*args, **kwargs):
-        return response
+        raise AssertionError("IACR downloads should not make an HTTP preflight request")
 
     def fake_download(url, target):
         calls.append((url, target))
@@ -54,26 +46,3 @@ def test_iacr_download_uses_seleniumbase_for_cloudflare(monkeypatch, tmp_path) -
     target = tmp_path / "iacr_2025_1.pdf"
     assert result == str(target)
     assert calls == [("https://eprint.iacr.org/2025/1.pdf", target)]
-
-
-def test_iacr_download_uses_seleniumbase_when_http_request_fails(
-    monkeypatch, tmp_path
-) -> None:
-    request = httpx.Request("GET", "https://eprint.iacr.org/2024/1.pdf")
-    calls = []
-
-    async def failed_get(*args, **kwargs):
-        raise httpx.RemoteProtocolError("proxy disconnected", request=request)
-
-    def fake_download(url, target):
-        calls.append((url, target))
-        target.write_bytes(b"%PDF-1.7")
-
-    monkeypatch.setattr(server, "_get", failed_get)
-    monkeypatch.setattr(server, "download_iacr_pdf", fake_download)
-
-    result = asyncio.run(server.download_iacr_paper("2024/1", str(tmp_path)))
-
-    target = tmp_path / "iacr_2024_1.pdf"
-    assert result == str(target)
-    assert calls == [("https://eprint.iacr.org/2024/1.pdf", target)]

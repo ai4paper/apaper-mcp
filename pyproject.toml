@@ -19,6 +19,7 @@ dependencies = [
   "beautifulsoup4>=4.12",
   "httpx[socks]>=0.27",
   "mcp>=1.12",
+  "seleniumbase>=4.0",
 ]
 
 [project.scripts]

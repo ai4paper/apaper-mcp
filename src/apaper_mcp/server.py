@@ -30,6 +30,8 @@ from .formatters import (
 )
 from .platforms.iacr import (
     build_iacr_search_params,
+    download_iacr_pdf,
+    is_cloudflare_challenge,
     parse_iacr_detail_html,
     parse_iacr_search_html,
 )
@@ -280,9 +282,19 @@ async def search_iacr_papers(
 @mcp.tool()
 async def download_iacr_paper(paper_id: str, save_path: str = "./downloads") -> str:
     """Download the PDF for an IACR ePrint paper."""
-    response = await _get(f"https://eprint.iacr.org/{paper_id}.pdf", timeout=60)
+    pdf_url = f"https://eprint.iacr.org/{paper_id}.pdf"
+    try:
+        response = await _get(pdf_url, timeout=60)
+    except httpx.HTTPError:
+        response = None
     Path(save_path).mkdir(parents=True, exist_ok=True)
     target = Path(save_path) / f"iacr_{paper_id.replace('/', '_')}.pdf"
+    if response is None or is_cloudflare_challenge(response):
+        try:
+            await asyncio.to_thread(download_iacr_pdf, pdf_url, target)
+        except Exception:
+            return "Failed to download PDF: SeleniumBase could not retrieve the PDF"
+        return str(target)
     if not response.is_success or "pdf" not in response.headers.get("content-type", ""):
         return f"Failed to download PDF: expected a PDF but received {response.headers.get('content-type', 'an unknown type')}"
     target.write_bytes(response.content)

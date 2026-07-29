@@ -41,6 +41,7 @@ mcp = FastMCP("apaper-mcp")
 _arxiv_lock = asyncio.Lock()
 _arxiv_last_request = 0.0
 _cnki_cookie = ""
+_iacr_download_tasks: set[asyncio.Task] = set()
 
 CNKI_LOGIN_URL = "https://login.cnki.net/TopLoginCore/api/loginapi/IpLoginFlushPo"
 CNKI_SEARCH_URL = "https://kns.cnki.net/kns8s/brief/grid"
@@ -283,11 +284,29 @@ async def download_iacr_paper(paper_id: str, save_path: str = "./downloads") -> 
     """Download the PDF for an IACR ePrint paper."""
     pdf_url = f"https://eprint.iacr.org/{paper_id}.pdf"
     target = Path(save_path) / f"iacr_{paper_id.replace('/', '_')}.pdf"
+    target.unlink(missing_ok=True)
+    download_task = asyncio.create_task(
+        asyncio.to_thread(download_iacr_pdf, pdf_url, target)
+    )
+    _iacr_download_tasks.add(download_task)
+
+    def finish(task):
+        _iacr_download_tasks.discard(task)
+        if not task.cancelled():
+            task.exception()
+
+    download_task.add_done_callback(finish)
     try:
-        await asyncio.to_thread(download_iacr_pdf, pdf_url, target)
+        while not download_task.done():
+            if target.is_file() and target.read_bytes()[:4] == b"%PDF":
+                return str(target)
+            await asyncio.sleep(0.05)
+        await download_task
     except Exception:
         return "Failed to download PDF: SeleniumBase could not retrieve the PDF"
-    return str(target)
+    if target.is_file() and target.read_bytes()[:4] == b"%PDF":
+        return str(target)
+    return "Failed to download PDF: SeleniumBase could not retrieve the PDF"
 
 
 @mcp.tool()

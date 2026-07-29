@@ -2,7 +2,9 @@ from datetime import datetime, timezone
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
+import tempfile
 import time
 from urllib.parse import urlencode
 
@@ -44,7 +46,13 @@ def _download_pdf_with_browser(browser, pdf_url: str, target: Path) -> None:
                 continue
             state = (path.stat().st_mtime_ns, path.stat().st_size)
             if before.get(name) != state and path.read_bytes()[:4] == b"%PDF":
-                shutil.copyfile(path, target)
+                partial = target.with_name(target.name + ".part")
+                partial.unlink(missing_ok=True)
+                try:
+                    shutil.copyfile(path, partial)
+                    partial.replace(target)
+                finally:
+                    partial.unlink(missing_ok=True)
                 return
         browser.sleep(1)
     raise TimeoutError("Browser did not download the IACR PDF")
@@ -80,17 +88,10 @@ def _pass_cloudflare_challenge(browser, pdf_url: str) -> None:
     raise TimeoutError("Cloudflare challenge did not complete")
 
 
-def download_iacr_pdf(pdf_url: str, target: Path, browser_factory=None) -> None:
-    """Use SeleniumBase UC mode to pass IACR's challenge and save a PDF."""
+def _download_iacr_pdf_in_process(pdf_url: str, target: Path, browser_factory) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
-    if browser_factory is None:
-        from seleniumbase import SB
-
-        browser_factory = SB
-
     browser_options = {
         "uc": True,
-        "test": True,
         "locale": "en",
         "external_pdf": True,
     }
@@ -109,6 +110,26 @@ def download_iacr_pdf(pdf_url: str, target: Path, browser_factory=None) -> None:
             if target.is_file() and target.read_bytes()[:4] == b"%PDF":
                 return
 
+    if not target.is_file() or target.read_bytes()[:4] != b"%PDF":
+        raise ValueError("SeleniumBase did not download a valid PDF")
+
+
+def download_iacr_pdf(pdf_url: str, target: Path, browser_factory=None) -> None:
+    """Use SeleniumBase UC mode to pass IACR's challenge and save a PDF."""
+    if browser_factory is not None:
+        _download_iacr_pdf_in_process(pdf_url, target, browser_factory)
+        return
+
+    target = target.resolve()
+    with tempfile.TemporaryDirectory(prefix="apaper-iacr-") as work_dir:
+        result = subprocess.run(
+            [sys.executable, "-m", "apaper_mcp.platforms.iacr", pdf_url, str(target)],
+            cwd=work_dir,
+            capture_output=True,
+            text=True,
+        )
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or "SeleniumBase worker failed")
     if not target.is_file() or target.read_bytes()[:4] != b"%PDF":
         raise ValueError("SeleniumBase did not download a valid PDF")
 
@@ -260,3 +281,9 @@ def parse_iacr_detail_html(html: str, paper_id: str) -> dict | None:
         ],
         extra={"publicationInfo": publication, "history": "; ".join(history)},
     )
+
+
+if __name__ == "__main__":
+    from seleniumbase import SB
+
+    _download_iacr_pdf_in_process(sys.argv[1], Path(sys.argv[2]), SB)

@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 import httpx
 
@@ -46,3 +47,39 @@ def test_iacr_download_uses_seleniumbase_directly(monkeypatch, tmp_path) -> None
     target = tmp_path / "iacr_2025_1.pdf"
     assert result == str(target)
     assert calls == [("https://eprint.iacr.org/2025/1.pdf", target)]
+
+
+def test_iacr_download_defaults_to_downloads_directory(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def fake_download(url, target):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"%PDF-1.7")
+
+    monkeypatch.setattr(server, "download_iacr_pdf", fake_download)
+
+    result = asyncio.run(server.download_iacr_paper("2025/1"))
+
+    assert result == "downloads/iacr_2025_1.pdf"
+    assert (tmp_path / result).read_bytes() == b"%PDF-1.7"
+
+
+def test_iacr_download_returns_before_browser_cleanup(monkeypatch, tmp_path) -> None:
+    def fake_download(url, target):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"%PDF-1.7")
+        time.sleep(0.2)
+
+    monkeypatch.setattr(server, "download_iacr_pdf", fake_download)
+
+    async def call_download():
+        started = time.monotonic()
+        result = await server.download_iacr_paper("2025/1", str(tmp_path))
+        elapsed = time.monotonic() - started
+        await asyncio.sleep(0.25)
+        return result, elapsed
+
+    result, elapsed = asyncio.run(call_download())
+
+    assert result == str(tmp_path / "iacr_2025_1.pdf")
+    assert elapsed < 0.15

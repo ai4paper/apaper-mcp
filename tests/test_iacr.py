@@ -1,3 +1,7 @@
+import subprocess
+import sys
+from pathlib import Path
+
 from apaper_mcp.formatters import format_iacr_search_response
 import apaper_mcp.platforms.iacr as iacr_platform
 from apaper_mcp.platforms.iacr import (
@@ -104,7 +108,7 @@ def test_iacr_seleniumbase_downloads_pdf_without_preview(tmp_path, monkeypatch) 
     assert target.read_bytes() == b"%PDF-1.7"
     assert calls[0][0] == "config"
     assert calls[0][1]["uc"] is True
-    assert calls[0][1]["test"] is True
+    assert "test" not in calls[0][1]
     assert calls[0][1]["locale"] == "en"
     assert calls[0][1]["xvfb"] is True
     assert calls[0][1]["chromium_arg"] == "ozone-platform=x11"
@@ -178,3 +182,65 @@ def test_iacr_browser_download_wait_defaults_to_ten_seconds(
         iacr_platform._download_pdf_with_browser(
             FakeBrowser(), "https://eprint.iacr.org/2025/1.pdf", tmp_path / "paper.pdf"
         )
+
+
+def test_iacr_browser_download_publishes_complete_pdf_atomically(
+    tmp_path, monkeypatch
+) -> None:
+    source = tmp_path / "browser.pdf"
+    target = tmp_path / "paper.pdf"
+    copied_to = []
+
+    class FakeBrowser:
+        def get_browser_downloads_folder(self):
+            return str(tmp_path)
+
+        def get_downloaded_files(self, browser=False):
+            return [source.name] if source.exists() else []
+
+        def open(self, url):
+            source.write_bytes(b"%PDF-1.7")
+
+        def sleep(self, seconds):
+            pass
+
+    def fake_copyfile(source_path, destination_path):
+        copied_to.append(Path(destination_path))
+        Path(destination_path).write_bytes(Path(source_path).read_bytes())
+
+    monkeypatch.setattr(iacr_platform.shutil, "copyfile", fake_copyfile)
+
+    iacr_platform._download_pdf_with_browser(
+        FakeBrowser(), "https://eprint.iacr.org/2025/1.pdf", target
+    )
+
+    assert copied_to == [tmp_path / "paper.pdf.part"]
+    assert target.read_bytes() == b"%PDF-1.7"
+
+
+def test_iacr_seleniumbase_artifacts_are_isolated(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "downloaded" / "paper.pdf"
+    worker_cwd = None
+    real_run = subprocess.run
+
+    def fake_run(command, **kwargs):
+        nonlocal worker_cwd
+        if command[:3] != [sys.executable, "-m", "apaper_mcp.platforms.iacr"]:
+            return real_run(command, **kwargs)
+        worker_cwd = kwargs["cwd"]
+        assert command[:3] == [
+            sys.executable,
+            "-m",
+            "apaper_mcp.platforms.iacr",
+        ]
+        Path(command[-1]).parent.mkdir(parents=True, exist_ok=True)
+        Path(command[-1]).write_bytes(b"%PDF-1.7")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    download_iacr_pdf("https://eprint.iacr.org/2025/1.pdf", target)
+
+    assert target.read_bytes() == b"%PDF-1.7"
+    assert worker_cwd is not None
+    assert not Path(worker_cwd).exists()

@@ -302,11 +302,11 @@ async def download_iacr_paper(paper_id: str, save_path: str = "./downloads") -> 
                 return str(target)
             await asyncio.sleep(0.05)
         await download_task
-    except Exception:
-        return "Failed to download PDF: SeleniumBase could not retrieve the PDF"
+    except Exception as error:
+        raise RuntimeError(f"IACR PDF download failed: {error}") from error
     if target.is_file() and target.read_bytes()[:4] == b"%PDF":
         return str(target)
-    return "Failed to download PDF: SeleniumBase could not retrieve the PDF"
+    raise RuntimeError("IACR PDF download failed: no valid PDF was produced")
 
 
 @mcp.tool()

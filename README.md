@@ -31,10 +31,10 @@ CNKI tools require institutional access. On IP-based networks the session
 cookie is obtained automatically on first use — no manual login needed.
 
 IACR ePrint sits behind Cloudflare, which intermittently serves a JS bot
-challenge that automated HTTP clients can't solve — most often on PDF downloads.
-Search keeps working; when a download is challenged the tool reports it clearly
-(rather than saving the challenge page) and gives you the URL to fetch in a
-browser. This is server-side and unrelated to any proxy.
+challenge, most often on PDF downloads. The download tool uses SeleniumBase UC
+and CDP modes to complete the challenge, follows browser download events, and
+only publishes a file after Chrome reports completion and the bytes validate as
+a PDF.
 
 ## Proxy
 
@@ -61,7 +61,10 @@ Flaky residential/mobile proxies routinely drop or refuse connections;
 idempotent (GET) requests through the proxy are retried automatically on such
 transient failures. IACR fires the most requests per search (a detail fetch per
 result), so its per-request timeouts default high for slow proxies — tune with
-`IACR_TIMEOUT_MS` (`30000`) and `IACR_DOWNLOAD_TIMEOUT_MS` (`60000`).
+`IACR_TIMEOUT_MS` (`30000`) and `IACR_DOWNLOAD_TIMEOUT_MS` (`600000`). IACR
+downloads retry fresh browser sessions three times by default; tune with
+`IACR_CAPTCHA_ATTEMPTS`, `IACR_CHALLENGE_WAIT` (seconds),
+`IACR_CHALLENGE_SOLVE_DELAY` (seconds), and `IACR_DOWNLOAD_IDLE_WAIT` (seconds).
 
 ## Install from PyPI
 
@@ -87,11 +90,20 @@ For an MCP client, use the published package as the local stdio command:
     "apaper-mcp": {
       "type": "local",
       "command": ["uvx", "apaper-mcp"],
+      "timeout": 900000,
       "enabled": true
     }
+  },
+  "experimental": {
+    "mcp_timeout": 900000
   }
 }
 ```
+
+The 15-minute timeout is needed for browser-assisted IACR downloads. Some
+OpenCode versions ignore the per-server value for tool calls, so the global
+`experimental.mcp_timeout` fallback is included as well. Quit and restart
+OpenCode after changing MCP configuration.
 
 ## Development
 

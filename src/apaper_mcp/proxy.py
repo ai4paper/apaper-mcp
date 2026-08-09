@@ -1,6 +1,10 @@
 import re
+import select
+import socketserver
+import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from urllib.parse import quote, unquote
 
 import httpx
@@ -82,10 +86,117 @@ def fetch_with_conn_retry(operation: Callable[[], object], *, method: str = "GET
 
 def proxy_url_from_env() -> str | None:
     import os
+
     cfg = parse_proxy_url(os.getenv("SPIDER_PROXY"))
     if os.getenv("SPIDER_PROXY", "").strip() and not cfg:
         raise RuntimeError("SPIDER_PROXY is set but the proxy could not be initialised (unparseable SPIDER_PROXY value); refusing to send requests directly. Fix or unset SPIDER_PROXY.")
     return str(cfg["href"]) if cfg else None
+
+
+class _SocksConnectHandler(socketserver.StreamRequestHandler):
+    def handle(self) -> None:
+        request = self.rfile.readline(65537)
+        if not request:
+            return
+        try:
+            method, authority, _ = request.decode("ascii").split()
+            destination = _host_port(authority)
+            if method != "CONNECT" or destination is None:
+                self.wfile.write(b"HTTP/1.1 405 Method Not Allowed\r\n\r\n")
+                return
+            while self.rfile.readline(65537) not in (b"\r\n", b"\n", b""):
+                pass
+
+            import socks
+
+            if not isinstance(self.server, _SocksConnectServer):
+                raise TypeError("Unexpected proxy server type")
+            config = self.server.proxy_config
+            username = config["username"]
+            password = config["password"]
+            upstream = socks.socksocket()
+            upstream.set_proxy(
+                socks.SOCKS4 if config["socks_type"] == 4 else socks.SOCKS5,
+                str(config["host"]),
+                int(str(config["port"])),
+                rdns=True,
+                username=str(username) if username is not None else None,
+                password=str(password) if password is not None else None,
+            )
+            upstream.settimeout(30)
+            upstream.connect(destination)
+        except Exception:
+            self.wfile.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
+            return
+
+        try:
+            self.wfile.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            self.wfile.flush()
+            upstream.settimeout(None)
+            sockets = (self.connection, upstream)
+            while True:
+                readable, _, _ = select.select(sockets, (), (), 1)
+                for source in readable:
+                    try:
+                        data = source.recv(65536)
+                    except OSError:
+                        return
+                    if not data:
+                        return
+                    try:
+                        (
+                            upstream
+                            if source is self.connection
+                            else self.connection
+                        ).sendall(data)
+                    except OSError:
+                        return
+        finally:
+            upstream.close()
+
+
+class _SocksConnectServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+    proxy_config: dict[str, object]
+
+
+@contextmanager
+def selenium_proxy_from_env() -> Iterator[str | None]:
+    """Yield a proxy format SeleniumBase supports, bridging SOCKS auth locally."""
+    import os
+
+    raw = os.getenv("SPIDER_PROXY")
+    config = parse_proxy_url(raw)
+    if raw and raw.strip() and not config:
+        proxy_url_from_env()
+    if not config:
+        yield None
+        return
+
+    if config["kind"] == "socks" and config["username"] is not None:
+        server = _SocksConnectServer(("127.0.0.1", 0), _SocksConnectHandler)
+        server.proxy_config = config
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            host, port = server.server_address[:2]
+            yield f"{host}:{port}"
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+        return
+
+    host = f"[{config['host']}]" if ":" in str(config["host"]) else config["host"]
+    endpoint = f"{host}:{config['port']}"
+    if config["username"] is not None:
+        password = config["password"] or ""
+        yield f"{config['username']}:{password}@{endpoint}"
+    elif config["kind"] == "socks":
+        yield f"{config['scheme']}://{endpoint}"
+    else:
+        yield endpoint
 
 
 def make_client(*, direct: bool = False, timeout: float = 30) -> httpx.Client:

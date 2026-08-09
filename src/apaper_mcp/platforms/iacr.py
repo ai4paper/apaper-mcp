@@ -6,9 +6,22 @@ import subprocess
 import sys
 import tempfile
 import time
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
+import mycdp
 from bs4 import BeautifulSoup
+
+from ..proxy import selenium_proxy_from_env
+
+_CHALLENGE_INDICATORS = (
+    "turnstile",
+    "challenges.cloudflare",
+    "just a moment",
+    "verify you are human",
+    "checking your browser",
+    "cf-browser-verification",
+    "cf-challenge",
+)
 
 
 def build_iacr_search_params(
@@ -30,62 +43,134 @@ def is_cloudflare_challenge(response) -> bool:
     )
 
 
+def _cdp_page_source(browser) -> str:
+    try:
+        return browser.cdp.get_page_source().lower()
+    except Exception:
+        return ""
+
+
 def _download_pdf_with_browser(browser, pdf_url: str, target: Path) -> None:
-    download_dir = Path(browser.get_browser_downloads_folder())
-    before = {
-        name: (path.stat().st_mtime_ns, path.stat().st_size)
-        for name in browser.get_downloaded_files(browser=True)
-        if (path := download_dir / name).is_file()
+    selector = f'a[href$="{urlsplit(pdf_url).path}"]'
+    challenge_wait = float(os.getenv("IACR_CHALLENGE_WAIT", "90"))
+    detail_deadline = time.monotonic() + challenge_wait
+    next_solve = 0.0
+    while not browser.cdp.is_element_present(selector):
+        now = time.monotonic()
+        if now >= detail_deadline:
+            raise TimeoutError("Cloudflare challenge did not complete")
+        page_source = _cdp_page_source(browser)
+        if any(x in page_source for x in _CHALLENGE_INDICATORS) and now >= next_solve:
+            browser.cdp.solve_captcha()
+            next_solve = now + 8
+        browser.cdp.sleep(0.25)
+
+    state = {
+        "guid": None,
+        "filename": None,
+        "status": None,
+        "received": 0,
+        "total": 0,
+        "last_progress": time.monotonic(),
     }
-    browser.open(pdf_url)
-    deadline = time.monotonic() + float(os.getenv("IACR_DOWNLOAD_WAIT", "10"))
-    while time.monotonic() < deadline:
-        for name in browser.get_downloaded_files(browser=True):
-            path = download_dir / name
-            if not path.is_file() or path.suffix.lower() != ".pdf":
-                continue
-            state = (path.stat().st_mtime_ns, path.stat().st_size)
-            if before.get(name) != state and path.read_bytes()[:4] == b"%PDF":
-                partial = target.with_name(target.name + ".part")
-                partial.unlink(missing_ok=True)
-                try:
-                    shutil.copyfile(path, partial)
-                    partial.replace(target)
-                finally:
-                    partial.unlink(missing_ok=True)
-                return
-        browser.sleep(1)
-    raise TimeoutError("Browser did not download the IACR PDF")
 
+    def download_started(event) -> None:
+        if event.url.split("?", 1)[0] == pdf_url and state["guid"] is None:
+            state.update(
+                guid=event.guid,
+                filename=Path(event.suggested_filename).name,
+                status="inProgress",
+                received=0,
+                total=0,
+                last_progress=time.monotonic(),
+            )
 
-def _pass_cloudflare_challenge(browser, pdf_url: str) -> None:
-    indicators = (
-        "turnstile",
-        "challenges.cloudflare",
-        "just a moment",
-        "verify you are human",
-        "checking your browser",
-        "cf-browser-verification",
-        "cf-challenge",
-    )
-    reconnect_time = float(os.getenv("IACR_RECONNECT_TIME", "5"))
-    timeout = time.monotonic() + float(os.getenv("IACR_CHALLENGE_WAIT", "60"))
-    browser.uc_open_with_reconnect(pdf_url, reconnect_time=reconnect_time)
-    while time.monotonic() < timeout:
-        cookies = {
-            cookie.get("name"): cookie.get("value") for cookie in browser.get_cookies()
-        }
-        if cookies.get("cf_clearance"):
+    def download_progress(event) -> None:
+        if event.guid != state["guid"]:
             return
-        page_source = browser.get_page_source().lower()
-        if not any(indicator in page_source for indicator in indicators):
-            return
+        if int(event.received_bytes) != state["received"]:
+            state["last_progress"] = time.monotonic()
+        state.update(
+            status=event.state,
+            received=int(event.received_bytes),
+            total=int(event.total_bytes),
+        )
+
+    with tempfile.TemporaryDirectory(prefix="iacr-download-") as download_folder:
+        download_dir = Path(download_folder)
+        connection = browser.cdp.browser.connection
+        connection.add_handler(mycdp.browser.DownloadWillBegin, download_started)
+        connection.add_handler(mycdp.browser.DownloadProgress, download_progress)
+        browser.get_event_loop().run_until_complete(
+            connection.send(
+                mycdp.browser.set_download_behavior(
+                    "allow",
+                    download_path=str(download_dir),
+                    events_enabled=True,
+                )
+            )
+        )
+        browser.cdp.click(selector)
+
+        challenge_deadline = time.monotonic() + challenge_wait
+        configured_wait = os.getenv("IACR_DOWNLOAD_WAIT")
+        hard_wait = (
+            float(configured_wait)
+            if configured_wait is not None
+            else float(os.getenv("IACR_DOWNLOAD_TIMEOUT_MS", "600000")) / 1000
+        )
+        hard_deadline = time.monotonic() + hard_wait
+        idle_wait = float(os.getenv("IACR_DOWNLOAD_IDLE_WAIT", "90"))
+        solve_at = time.monotonic() + float(
+            os.getenv("IACR_CHALLENGE_SOLVE_DELAY", "20")
+        )
+        solved_challenge = False
+
+        while time.monotonic() < hard_deadline:
+            now = time.monotonic()
+            if state["status"] == "completed":
+                break
+            if state["status"] == "canceled":
+                raise RuntimeError("Chrome canceled the IACR download")
+            if state["guid"]:
+                if now - state["last_progress"] > idle_wait:
+                    source = download_dir / str(state["filename"])
+                    disk_size = source.stat().st_size if source.is_file() else 0
+                    raise TimeoutError(
+                        "IACR download stopped making progress "
+                        f"({state['received']}/{state['total']} event bytes, "
+                        f"{disk_size} bytes on disk)"
+                    )
+            else:
+                if now >= challenge_deadline:
+                    raise TimeoutError("Cloudflare challenge did not complete")
+                page_source = _cdp_page_source(browser)
+                if (
+                    any(x in page_source for x in _CHALLENGE_INDICATORS)
+                    and not solved_challenge
+                    and now >= solve_at
+                ):
+                    browser.cdp.solve_captcha()
+                    solved_challenge = True
+            browser.cdp.sleep(0.25)
+        else:
+            raise TimeoutError("IACR download exceeded its timeout")
+
+        source = download_dir / str(state["filename"])
+        if (
+            not source.is_file()
+            or source.read_bytes()[:4] != b"%PDF"
+            or (state["total"] and source.stat().st_size != state["total"])
+        ):
+            raise ValueError("Chrome did not produce a complete PDF")
+
+        partial = target.with_name(target.name + ".part")
+        partial.unlink(missing_ok=True)
         try:
-            browser.uc_gui_handle_captcha()
-        except Exception:
-            browser.uc_gui_click_captcha()
-        browser.sleep(3)
-    raise TimeoutError("Cloudflare challenge did not complete")
+            shutil.copyfile(source, partial)
+            partial.replace(target)
+        finally:
+            partial.unlink(missing_ok=True)
 
 
 def _download_iacr_pdf_in_process(pdf_url: str, target: Path, browser_factory) -> None:
@@ -100,18 +185,27 @@ def _download_iacr_pdf_in_process(pdf_url: str, target: Path, browser_factory) -
         browser_options["chromium_arg"] = "ozone-platform=x11"
     else:
         browser_options["headed"] = True
-    attempts = int(os.getenv("IACR_CAPTCHA_ATTEMPTS", "2"))
+    attempts = max(1, int(os.getenv("IACR_CAPTCHA_ATTEMPTS", "3")))
+    last_error = None
 
-    for attempt in range(attempts):
-        target.unlink(missing_ok=True)
-        with browser_factory(**browser_options) as browser:
-            _pass_cloudflare_challenge(browser, pdf_url)
-            _download_pdf_with_browser(browser, pdf_url, target)
-            if target.is_file() and target.read_bytes()[:4] == b"%PDF":
-                return
+    with selenium_proxy_from_env() as proxy:
+        if proxy:
+            browser_options["proxy"] = proxy
+        for attempt in range(attempts):
+            target.unlink(missing_ok=True)
+            try:
+                with browser_factory(**browser_options) as browser:
+                    browser.activate_cdp_mode(pdf_url.removesuffix(".pdf"))
+                    _download_pdf_with_browser(browser, pdf_url, target)
+                    if target.is_file() and target.read_bytes()[:4] == b"%PDF":
+                        return
+                    last_error = ValueError("Chrome did not produce a valid PDF")
+            except Exception as error:
+                last_error = error
 
-    if not target.is_file() or target.read_bytes()[:4] != b"%PDF":
-        raise ValueError("SeleniumBase did not download a valid PDF")
+    if last_error is not None:
+        raise last_error
+    raise ValueError("SeleniumBase did not download a valid PDF")
 
 
 def download_iacr_pdf(pdf_url: str, target: Path, browser_factory=None) -> None:
@@ -129,7 +223,8 @@ def download_iacr_pdf(pdf_url: str, target: Path, browser_factory=None) -> None:
             text=True,
         )
     if result.returncode:
-        raise RuntimeError(result.stderr.strip() or "SeleniumBase worker failed")
+        errors = [line.strip() for line in result.stderr.splitlines() if line.strip()]
+        raise RuntimeError(errors[-1] if errors else "SeleniumBase worker failed")
     if not target.is_file() or target.read_bytes()[:4] != b"%PDF":
         raise ValueError("SeleniumBase did not download a valid PDF")
 

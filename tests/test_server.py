@@ -2,6 +2,7 @@ import asyncio
 import time
 
 import httpx
+from mcp.shared.memory import create_connected_server_and_client_session
 
 import apaper_mcp.server as server
 
@@ -83,3 +84,22 @@ def test_iacr_download_returns_before_browser_cleanup(monkeypatch, tmp_path) -> 
 
     assert result == str(tmp_path / "iacr_2025_1.pdf")
     assert elapsed < 0.15
+
+
+def test_iacr_download_failure_is_an_mcp_tool_error(monkeypatch, tmp_path) -> None:
+    def fake_download(url, target):
+        raise RuntimeError("Cloudflare challenge did not complete")
+
+    monkeypatch.setattr(server, "download_iacr_pdf", fake_download)
+
+    async def call_download():
+        async with create_connected_server_and_client_session(server.mcp) as session:
+            return await session.call_tool(
+                "download_iacr_paper",
+                {"paper_id": "2026/1623", "save_path": str(tmp_path)},
+            )
+
+    result = asyncio.run(call_download())
+
+    assert result.isError is True
+    assert "Cloudflare challenge did not complete" in result.content[0].text

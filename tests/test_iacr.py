@@ -1,7 +1,11 @@
+import asyncio
 import subprocess
+import socket
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
+import mycdp
 from apaper_mcp.formatters import format_iacr_search_response
 import apaper_mcp.platforms.iacr as iacr_platform
 from apaper_mcp.platforms.iacr import (
@@ -44,17 +48,82 @@ def test_iacr_search_and_detail_parsers() -> None:
         '<h3 class="mb-3">Detailed</h3><p class="fst-italic">Alice and Bob</p><a class="badge bg-secondary keyword">MPC</a><div>History\n2024-05-01: First version\nShort URL</div>',
         "2024/1",
     )
+    assert detail is not None
     assert detail["authors"] == ["Alice", "Bob"]
+
+
+def test_iacr_cdp_page_source_tolerates_navigation() -> None:
+    class FakeCdp:
+        def get_page_source(self):
+            raise RuntimeError("Element {html} was not found")
+
+    browser = SimpleNamespace(cdp=FakeCdp())
+
+    assert iacr_platform._cdp_page_source(browser) == ""
 
 
 def test_iacr_seleniumbase_downloads_pdf_without_preview(tmp_path, monkeypatch) -> None:
     calls = []
-    browser_downloads = tmp_path / "browser-downloads"
-    browser_downloads.mkdir()
+
+    class FakeConnection:
+        def __init__(self):
+            self.handlers = {}
+            self.download_dir = None
+
+        def add_handler(self, event_type, handler):
+            self.handlers[event_type] = handler
+
+        async def send(self, command):
+            payload = next(command)
+            assert payload["method"] == "Browser.setDownloadBehavior"
+            assert payload["params"]["behavior"] == "allow"
+            assert payload["params"]["eventsEnabled"] is True
+            self.download_dir = Path(payload["params"]["downloadPath"])
+
+    class FakeLoop:
+        def run_until_complete(self, coroutine):
+            return asyncio.run(coroutine)
+
+    class FakeCdp:
+        def __init__(self):
+            self.connection = FakeConnection()
+            self.browser = SimpleNamespace(connection=self.connection)
+            self.pdf_clicked = False
+
+        def is_element_present(self, selector):
+            return True
+
+        def get_page_source(self):
+            return "Just a moment..." if self.pdf_clicked else "paper"
+
+        def click(self, selector):
+            calls.append(("download", selector))
+            self.pdf_clicked = True
+
+        def solve_captcha(self):
+            calls.append(("captcha",))
+            guid = "download-guid"
+            content = b"%PDF-1.7"
+            self.connection.handlers[mycdp.browser.DownloadWillBegin](
+                mycdp.browser.DownloadWillBegin(
+                    "frame", guid, "https://eprint.iacr.org/2025/1.pdf", "1.pdf"
+                )
+            )
+            assert self.connection.download_dir is not None
+            (self.connection.download_dir / "1.pdf").write_bytes(content)
+            self.connection.handlers[mycdp.browser.DownloadProgress](
+                mycdp.browser.DownloadProgress(
+                    guid, len(content), len(content), "completed"
+                )
+            )
+
+        def sleep(self, seconds):
+            calls.append(("sleep", seconds))
 
     class FakeBrowser:
         def __init__(self, **kwargs):
             calls.append(("config", kwargs))
+            self.cdp = FakeCdp()
 
         def __enter__(self):
             return self
@@ -65,42 +134,13 @@ def test_iacr_seleniumbase_downloads_pdf_without_preview(tmp_path, monkeypatch) 
         def activate_cdp_mode(self, url):
             calls.append(("open", url))
 
-        def sleep(self, seconds):
-            calls.append(("sleep", seconds))
-
-        def uc_open_with_reconnect(self, url, reconnect_time):
-            calls.append(("open_reconnect", url, reconnect_time))
-
-        def get_cookies(self):
-            return (
-                []
-                if not any(call[0] == "captcha" for call in calls)
-                else [{"name": "cf_clearance", "value": "clear"}]
-            )
-
-        def get_page_source(self):
-            return (
-                "Just a moment..."
-                if not any(call[0] == "captcha" for call in calls)
-                else "paper"
-            )
-
-        def uc_gui_click_captcha(self):
-            calls.append(("captcha",))
-
-        def get_downloaded_files(self, browser=False):
-            assert browser is True
-            return [path.name for path in browser_downloads.iterdir()]
-
-        def get_browser_downloads_folder(self):
-            return str(browser_downloads)
-
-        def open(self, url):
-            calls.append(("download", url))
-            (browser_downloads / "2025-1.pdf").write_bytes(b"%PDF-1.7")
+        def get_event_loop(self):
+            return FakeLoop()
 
     target = tmp_path / "paper.pdf"
     monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.setenv("SPIDER_PROXY", "http://user:pass@proxy.example:8080")
+    monkeypatch.setenv("IACR_CHALLENGE_SOLVE_DELAY", "0")
     download_iacr_pdf(
         "https://eprint.iacr.org/2025/1.pdf", target, browser_factory=FakeBrowser
     )
@@ -113,109 +153,62 @@ def test_iacr_seleniumbase_downloads_pdf_without_preview(tmp_path, monkeypatch) 
     assert calls[0][1]["xvfb"] is True
     assert calls[0][1]["chromium_arg"] == "ozone-platform=x11"
     assert calls[0][1]["external_pdf"] is True
+    assert calls[0][1]["proxy"] == "user:pass@proxy.example:8080"
     assert "headed" not in calls[0][1]
     assert calls[1:] == [
-        ("open_reconnect", "https://eprint.iacr.org/2025/1.pdf", 5),
+        ("open", "https://eprint.iacr.org/2025/1"),
+        ("download", 'a[href$="/2025/1.pdf"]'),
         ("captcha",),
-        ("sleep", 3),
-        ("download", "https://eprint.iacr.org/2025/1.pdf"),
+        ("sleep", 0.25),
     ]
 
 
-def test_iacr_captcha_prefers_gui_handler(monkeypatch) -> None:
+def test_authenticated_socks_proxy_uses_local_http_bridge(monkeypatch) -> None:
+    monkeypatch.setenv("SPIDER_PROXY", "socks5://proxy.example:1080:user:pass")
+
+    with iacr_platform.selenium_proxy_from_env() as proxy:
+        assert proxy is not None
+        host, port = proxy.rsplit(":", 1)
+        connection = socket.create_connection((host, int(port)), timeout=1)
+        connection.close()
+
+    with pytest.raises(OSError):
+        socket.create_connection((host, int(port)), timeout=0.1)
+
+
+def test_iacr_retries_failed_browser_session(tmp_path, monkeypatch) -> None:
     calls = []
 
     class FakeBrowser:
-        def uc_open_with_reconnect(self, url, reconnect_time):
-            calls.append(("open", url, reconnect_time))
+        def __enter__(self):
+            return self
 
-        def get_cookies(self):
-            if ("handle",) in calls:
-                return [{"name": "cf_clearance", "value": "clear"}]
-            return []
+        def __exit__(self, *args):
+            return False
 
-        def get_page_source(self):
-            return "Just a moment..."
+        def activate_cdp_mode(self, url):
+            calls.append(("open", url))
 
-        def uc_gui_click_captcha(self):
-            calls.append(("click",))
+    def fake_browser_factory(**kwargs):
+        return FakeBrowser()
 
-        def uc_gui_handle_captcha(self):
-            calls.append(("handle",))
+    def fake_download(browser, pdf_url, target):
+        calls.append(("download", pdf_url))
+        if len([call for call in calls if call[0] == "download"]) == 1:
+            raise TimeoutError("proxy stalled")
+        target.write_bytes(b"%PDF-1.7")
 
-        def sleep(self, seconds):
-            calls.append(("sleep", seconds))
+    monkeypatch.delenv("SPIDER_PROXY", raising=False)
+    monkeypatch.setenv("IACR_CAPTCHA_ATTEMPTS", "2")
+    monkeypatch.setattr(iacr_platform, "_download_pdf_with_browser", fake_download)
 
-    monkeypatch.setenv("IACR_CHALLENGE_WAIT", "1")
-    iacr_platform._pass_cloudflare_challenge(
-        FakeBrowser(), "https://eprint.iacr.org/2025/1.pdf"
+    iacr_platform._download_iacr_pdf_in_process(
+        "https://eprint.iacr.org/2026/1623.pdf",
+        tmp_path / "paper.pdf",
+        fake_browser_factory,
     )
 
-    assert calls == [
-        ("open", "https://eprint.iacr.org/2025/1.pdf", 5),
-        ("handle",),
-        ("sleep", 3),
-    ]
-
-
-def test_iacr_browser_download_wait_defaults_to_ten_seconds(
-    tmp_path, monkeypatch
-) -> None:
-    class FakeBrowser:
-        def get_browser_downloads_folder(self):
-            return str(tmp_path)
-
-        def get_downloaded_files(self, browser=False):
-            return []
-
-        def open(self, url):
-            pass
-
-        def sleep(self, seconds):
-            raise AssertionError("The ten-second deadline should have expired")
-
-    times = iter((100, 110))
-    monkeypatch.delenv("IACR_DOWNLOAD_WAIT", raising=False)
-    monkeypatch.setattr(iacr_platform.time, "monotonic", lambda: next(times))
-
-    with pytest.raises(TimeoutError, match="did not download"):
-        iacr_platform._download_pdf_with_browser(
-            FakeBrowser(), "https://eprint.iacr.org/2025/1.pdf", tmp_path / "paper.pdf"
-        )
-
-
-def test_iacr_browser_download_publishes_complete_pdf_atomically(
-    tmp_path, monkeypatch
-) -> None:
-    source = tmp_path / "browser.pdf"
-    target = tmp_path / "paper.pdf"
-    copied_to = []
-
-    class FakeBrowser:
-        def get_browser_downloads_folder(self):
-            return str(tmp_path)
-
-        def get_downloaded_files(self, browser=False):
-            return [source.name] if source.exists() else []
-
-        def open(self, url):
-            source.write_bytes(b"%PDF-1.7")
-
-        def sleep(self, seconds):
-            pass
-
-    def fake_copyfile(source_path, destination_path):
-        copied_to.append(Path(destination_path))
-        Path(destination_path).write_bytes(Path(source_path).read_bytes())
-
-    monkeypatch.setattr(iacr_platform.shutil, "copyfile", fake_copyfile)
-
-    iacr_platform._download_pdf_with_browser(
-        FakeBrowser(), "https://eprint.iacr.org/2025/1.pdf", target
-    )
-
-    assert copied_to == [tmp_path / "paper.pdf.part"]
-    assert target.read_bytes() == b"%PDF-1.7"
+    assert [call[0] for call in calls] == ["open", "download", "open", "download"]
 
 
 def test_iacr_seleniumbase_artifacts_are_isolated(tmp_path, monkeypatch) -> None:
@@ -244,3 +237,22 @@ def test_iacr_seleniumbase_artifacts_are_isolated(tmp_path, monkeypatch) -> None
     assert target.read_bytes() == b"%PDF-1.7"
     assert worker_cwd is not None
     assert not Path(worker_cwd).exists()
+
+
+def test_iacr_worker_failure_uses_last_traceback_line(tmp_path, monkeypatch) -> None:
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            "",
+            "Traceback (most recent call last):\nTimeoutError: Browser did not download the IACR PDF\n",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError) as error:
+        download_iacr_pdf(
+            "https://eprint.iacr.org/2026/1623.pdf", tmp_path / "paper.pdf"
+        )
+
+    assert str(error.value) == "TimeoutError: Browser did not download the IACR PDF"

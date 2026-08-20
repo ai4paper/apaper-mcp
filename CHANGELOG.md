@@ -6,6 +6,16 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-08-20
+
+### Changed
+
+- IACR PDF downloads now use Scrapling's stealth browser and Cloudflare solver with configurable Chromium and retry settings. (@isomoes)
+
+### Fixed
+
+- Browser-assisted IACR downloads validate PDFs, publish files atomically, preserve proxy support, and surface actionable failures. (@isomoes)
+
 ## [0.3.3] - 2026-07-29
 
 ### Changed

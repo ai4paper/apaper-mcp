@@ -30,7 +30,7 @@ def test_arxiv_retries_proxy_timeout(monkeypatch) -> None:
     assert calls == 2
 
 
-def test_iacr_download_uses_seleniumbase_directly(monkeypatch, tmp_path) -> None:
+def test_iacr_download_uses_platform_downloader_directly(monkeypatch, tmp_path) -> None:
     calls = []
 
     async def fake_get(*args, **kwargs):

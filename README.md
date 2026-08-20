@@ -31,10 +31,9 @@ CNKI tools require institutional access. On IP-based networks the session
 cookie is obtained automatically on first use — no manual login needed.
 
 IACR ePrint sits behind Cloudflare, which intermittently serves a JS bot
-challenge, most often on PDF downloads. The download tool uses SeleniumBase UC
-and CDP modes to complete the challenge, follows browser download events, and
-only publishes a file after Chrome reports completion and the bytes validate as
-a PDF.
+challenge, most often on PDF downloads. The download tool uses Scrapling's
+stealth browser and built-in Cloudflare solver, and only publishes a file after
+the response bytes validate as a PDF.
 
 ## Proxy
 
@@ -62,18 +61,23 @@ idempotent (GET) requests through the proxy are retried automatically on such
 transient failures. IACR fires the most requests per search (a detail fetch per
 result), so its per-request timeouts default high for slow proxies — tune with
 `IACR_TIMEOUT_MS` (`30000`) and `IACR_DOWNLOAD_TIMEOUT_MS` (`600000`). IACR
-downloads retry fresh browser sessions three times by default; tune with
-`IACR_CAPTCHA_ATTEMPTS`, `IACR_CHALLENGE_WAIT` (seconds),
-`IACR_CHALLENGE_SOLVE_DELAY` (seconds), and `IACR_DOWNLOAD_IDLE_WAIT` (seconds).
+downloads retry fresh browser sessions three times by default; tune the count
+with `IACR_CAPTCHA_ATTEMPTS`.
 
 ## Install from PyPI
 
-The maintained runtime requires Python 3.12+. Run the published package
-directly with `uvx`:
+The maintained runtime requires Python 3.12+. The IACR downloader automatically
+uses a `chromium` executable from `PATH`. On Arch Linux, install it from the
+official repository, then run the published package directly with `uvx`:
 
 ```bash
+sudo pacman -S chromium
 uvx apaper-mcp
 ```
+
+On systems without a packaged Chromium, install Scrapling's browser runtime
+once with `uvx --from 'scrapling[fetchers]' scrapling install`. Set
+`IACR_BROWSER_EXECUTABLE` to use a browser at a nonstandard path.
 
 To install the command for repeated use:
 
@@ -113,6 +117,9 @@ Clone the repository and install its development dependencies with `uv`:
 uv sync
 uv run apaper-mcp
 ```
+
+Install Chromium through your OS package manager. If no system Chromium is
+available, run `uv run scrapling install` instead.
 
 Run tests with `uv run pytest`.
 

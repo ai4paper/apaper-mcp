@@ -110,16 +110,23 @@ def _cnki_search_request(value: str, page_num: int, page_size: int) -> httpx.Res
                 raise RuntimeError(
                     "CNKI login failed: this network does not appear to have IP-based access"
                 )
+
+        # 构建查询JSON
+        query_json_str = json.dumps(
+            build_cnki_query_json(value), ensure_ascii=False, separators=(",", ":")
+        )
+
+        # 使用 data 参数，httpx会正确处理表单编码
+        # 修复：确保所有值都是字符串类型
         data = {
-            "QueryJson": json.dumps(
-                build_cnki_query_json(value), ensure_ascii=False, separators=(",", ":")
-            ),
+            "QueryJson": query_json_str,
             "pageNum": str(page_num),
             "pageSize": str(page_size),
             "productStr": "YSTT4HG0,LSTPFY1C,RMJLXHZ3,JQIRZIYA,JUP3MUPD,1UR4K4HZ,BPBAFJ5S,R79MZMCB,MPMFIG1A,WQ0UVIAA,NB3BWEHK,XVLO76FD,HR1YT1Z9,BLZOG7CK,PWFIRAGL,EMRPGLPA,J708GVCE,ML4DRIDX,NLBO1Z6R,NN3FJMUV,",
             "searchFrom": "资源范围：总库",
             "turnpage": "vLP2bNpghntZLRq9Q5Y7Qg!!",
         }
+
         return client.post(
             CNKI_SEARCH_URL,
             headers={
@@ -373,13 +380,27 @@ async def search_google_scholar_papers(
 @mcp.tool()
 async def search_cnki_papers(query: str, page_num: int = 1, page_size: int = 20) -> str:
     """Search papers from CNKI using direct institutional egress."""
+    # CNKI API只接受特定的pageSize值（10, 20, 50等）
+    # 将用户请求的page_size调整为最接近的有效值
+    valid_page_sizes = [10, 20, 50]
+    if page_size not in valid_page_sizes:
+        # 找到最接近的有效值
+        adjusted_size = min(valid_page_sizes, key=lambda x: abs(x - page_size))
+    else:
+        adjusted_size = page_size
+
     response = await asyncio.to_thread(
-        _cnki_search_request, query, page_num, min(max(page_size, 1), 100)
+        _cnki_search_request, query, page_num, adjusted_size
     )
     response.raise_for_status()
-    return format_cnki_search_response(
-        parse_cnki_search_html(response.text, "https://kns.cnki.net/"), query
-    )
+
+    papers = parse_cnki_search_html(response.text, "https://kns.cnki.net/")
+
+    # 如果用户请求的数量小于调整后的值，截取结果
+    if page_size < adjusted_size:
+        papers = papers[:page_size]
+
+    return format_cnki_search_response(papers, query)
 
 
 @mcp.tool()

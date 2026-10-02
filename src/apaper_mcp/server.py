@@ -7,7 +7,8 @@ from urllib.parse import urljoin
 
 import httpx
 from bs4 import BeautifulSoup
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from .platforms.arxiv import (
     build_arxiv_search_params,
@@ -37,7 +38,7 @@ from .platforms.iacr import (
 from .proxy import make_client
 from .platforms.scholar import parse_google_scholar_html
 
-mcp = FastMCP("apaper-mcp")
+mcp = MCPServer("apaper-mcp")
 _arxiv_lock = asyncio.Lock()
 _arxiv_last_request = 0.0
 _cnki_cookie = ""
@@ -310,10 +311,10 @@ async def download_iacr_paper(paper_id: str, save_path: str = "./downloads") -> 
             await asyncio.sleep(0.05)
         await download_task
     except Exception as error:
-        raise RuntimeError(f"IACR PDF download failed: {error}") from error
+        raise ToolError(f"IACR PDF download failed: {error}") from error
     if target.is_file() and target.read_bytes()[:4] == b"%PDF":
         return str(target)
-    raise RuntimeError("IACR PDF download failed: no valid PDF was produced")
+    raise ToolError("IACR PDF download failed: no valid PDF was produced")
 
 
 @mcp.tool()

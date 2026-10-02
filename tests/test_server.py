@@ -2,9 +2,29 @@ import asyncio
 import time
 
 import httpx
-from mcp.shared.memory import create_connected_server_and_client_session
+from mcp.client import Client
 
 import apaper_mcp.server as server
+
+
+def test_mcp_v2_client_lists_all_tools() -> None:
+    async def list_tools():
+        async with Client(server.mcp) as client:
+            return await client.list_tools()
+
+    result = asyncio.run(list_tools())
+
+    assert {tool.name for tool in result.tools} == {
+        "search_arxiv_papers",
+        "download_arxiv_paper",
+        "search_iacr_papers",
+        "download_iacr_paper",
+        "search_dblp_papers",
+        "search_google_scholar_papers",
+        "search_cnki_papers",
+        "download_cnki_paper",
+    }
+    assert all(tool.input_schema["type"] == "object" for tool in result.tools)
 
 
 def test_arxiv_retries_proxy_timeout(monkeypatch) -> None:
@@ -93,7 +113,7 @@ def test_iacr_download_failure_is_an_mcp_tool_error(monkeypatch, tmp_path) -> No
     monkeypatch.setattr(server, "download_iacr_pdf", fake_download)
 
     async def call_download():
-        async with create_connected_server_and_client_session(server.mcp) as session:
+        async with Client(server.mcp) as session:
             return await session.call_tool(
                 "download_iacr_paper",
                 {"paper_id": "2026/1623", "save_path": str(tmp_path)},
@@ -101,5 +121,5 @@ def test_iacr_download_failure_is_an_mcp_tool_error(monkeypatch, tmp_path) -> No
 
     result = asyncio.run(call_download())
 
-    assert result.isError is True
+    assert result.is_error is True
     assert "Cloudflare challenge did not complete" in result.content[0].text

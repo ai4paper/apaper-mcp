@@ -6,6 +6,17 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-10-02
+
+### Changed
+
+- Migrate to MCP Python SDK v2 with updated server APIs and client tests. (@isomoes)
+
+### Fixed
+
+- Preserve actionable IACR download failure messages with MCP v2 tool errors. (@isomoes)
+- Adjust CNKI page sizes to supported values and truncate results to the requested count. (@isomoes)
+
 ## [0.3.4] - 2026-08-20
 
 ### Changed

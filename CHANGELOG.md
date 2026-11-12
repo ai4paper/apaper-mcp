@@ -6,9 +6,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-11-12
+
 ### Fixed
 
-- Fetch IACR search and details over HTTP, bound concurrent detail enrichment to ten seconds, and report blocked searches as tool errors instead of empty results.
+- Fetch IACR search and details over HTTP, bound concurrent detail enrichment to ten seconds, and report blocked searches as tool errors instead of empty results. (@isomoes)
 
 ## [0.3.6] - 2026-11-12
 

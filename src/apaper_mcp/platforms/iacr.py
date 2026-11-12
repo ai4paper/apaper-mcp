@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
-import shutil
+from tempfile import TemporaryDirectory
 from urllib.parse import urlencode
 
 from bs4 import BeautifulSoup
@@ -33,7 +34,6 @@ def download_iacr_pdf(pdf_url: str, target: Path, fetcher=None) -> None:
     fetcher = fetcher or StealthyFetcher
     timeout = int(os.getenv("IACR_DOWNLOAD_TIMEOUT_MS", "600000"))
     attempts = max(1, int(os.getenv("IACR_CAPTCHA_ATTEMPTS", "3")))
-    detail_url = pdf_url.removesuffix(".pdf")
 
     fetch_options = {
         "solve_cloudflare": True,
@@ -41,65 +41,85 @@ def download_iacr_pdf(pdf_url: str, target: Path, fetcher=None) -> None:
         "retries": 1,
         "locale": "en",
     }
-    browser_executable = os.getenv("IACR_BROWSER_EXECUTABLE") or shutil.which(
-        "chromium"
-    )
+    # Without an override Scrapling launches its bundled Chromium.
+    browser_executable = os.getenv("IACR_BROWSER_EXECUTABLE")
     if browser_executable:
         fetch_options["executable_path"] = browser_executable
 
-    body = b""
+    def save_pdf(body: bytes) -> None:
+        if not body.startswith(b"%PDF"):
+            raise ValueError("Browser download did not contain a valid PDF")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        partial = target.with_name(target.name + ".part")
+        try:
+            partial.write_bytes(body)
+            partial.replace(target)
+        finally:
+            partial.unlink(missing_ok=True)
+
+    downloaded = False
     last_error = None
-    with selenium_proxy_from_env() as proxy:
+
+    def setup_page(page) -> None:
+        def capture_download(download) -> None:
+            nonlocal downloaded, last_error
+            try:
+                save_pdf(Path(download.path()).read_bytes())
+                downloaded = True
+            except Exception as error:
+                last_error = error
+
+        page.on("download", capture_download)
+
+    with (
+        TemporaryDirectory(prefix="iacr-browser-") as profile,
+        selenium_proxy_from_env() as proxy,
+    ):
+        default = Path(profile) / "Default"
+        default.mkdir()
+        (default / "Preferences").write_text(
+            json.dumps({"plugins": {"always_open_pdf_externally": True}}),
+            encoding="utf-8",
+        )
+        fetch_options.update(
+            user_data_dir=profile,
+            additional_args={"accept_downloads": True},
+            page_setup=setup_page,
+        )
         fetch_options["proxy"] = _scrapling_proxy(proxy)
         for _ in range(attempts):
-            result = {}
-
-            def request_pdf(page) -> None:
-                try:
-                    response = page.request.get(pdf_url, timeout=timeout)
-                    result.update(
-                        body=response.body(),
-                        status=response.status,
-                        content_type=response.headers.get("content-type", "unknown"),
-                    )
-                except Exception as error:
-                    result["error"] = error
-
             try:
-                fetcher.fetch(detail_url, page_action=request_pdf, **fetch_options)
+                # Navigate to the protected resource itself so its challenge can
+                # execute in the browser. page.request.get() cannot run JavaScript.
+                response = fetcher.fetch(pdf_url, **fetch_options)
             except Exception as error:
+                if downloaded:
+                    return
                 last_error = error
                 continue
 
-            if result.get("error") is not None:
-                last_error = result["error"]
-                continue
-            status = int(result.get("status", 0))
+            # A download can succeed while navigation retains the challenge page
+            # or Scrapling cannot read the response body after navigation.
+            if downloaded:
+                return
+            status = int(response.status)
             if status < 200 or status >= 300:
                 last_error = RuntimeError(
                     f"IACR returned HTTP {status or 'unknown'} for {pdf_url}"
                 )
                 continue
-            body = result.get("body", b"")
+            body = response.body
             if body.startswith(b"%PDF"):
-                break
+                save_pdf(body)
+                return
             last_error = ValueError(
                 "Scrapling did not receive a valid PDF "
-                f"(content-type: {result.get('content_type', 'unknown')})"
+                f"(content-type: {response.headers.get('content-type', 'unknown')})"
             )
         else:
             if last_error is not None:
                 raise last_error
             raise ValueError("Scrapling did not receive a valid PDF")
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    partial = target.with_name(target.name + ".part")
-    partial.unlink(missing_ok=True)
-    try:
-        partial.write_bytes(body)
-        partial.replace(target)
-    finally:
-        partial.unlink(missing_ok=True)
 
 
 def _paper(**kwargs):

@@ -1,4 +1,6 @@
 import socket
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 from apaper_mcp.formatters import format_iacr_search_response
@@ -47,11 +49,12 @@ def test_iacr_search_and_detail_parsers() -> None:
     assert detail["authors"] == ["Alice", "Bob"]
 
 
-def _browser_page(body: bytes, status: int = 200, content_type: str = "application/pdf"):
-    response = SimpleNamespace(
-        body=lambda: body, status=status, headers={"content-type": content_type}
+def _pdf_response(
+    body: bytes, status: int = 200, content_type: str = "application/pdf"
+):
+    return SimpleNamespace(
+        body=body, status=status, headers={"content-type": content_type}
     )
-    return SimpleNamespace(request=SimpleNamespace(get=lambda *args, **kwargs: response))
 
 
 def test_iacr_scrapling_downloads_pdf(tmp_path, monkeypatch) -> None:
@@ -60,9 +63,13 @@ def test_iacr_scrapling_downloads_pdf(tmp_path, monkeypatch) -> None:
     class FakeFetcher:
         @classmethod
         def fetch(cls, url, **kwargs):
-            action = kwargs.pop("page_action")
+            profile = Path(kwargs.pop("user_data_dir"))
+            prefs = json.loads((profile / "Default" / "Preferences").read_text())
+            assert prefs["plugins"]["always_open_pdf_externally"] is True
+            assert kwargs.pop("additional_args") == {"accept_downloads": True}
+            assert callable(kwargs.pop("page_setup"))
             calls.append((url, kwargs))
-            action(_browser_page(b"%PDF-1.7"))
+            return _pdf_response(b"%PDF-1.7")
 
     target = tmp_path / "downloaded" / "paper.pdf"
     monkeypatch.setenv("SPIDER_PROXY", "http://user:pass@proxy.example:8080")
@@ -76,7 +83,7 @@ def test_iacr_scrapling_downloads_pdf(tmp_path, monkeypatch) -> None:
     assert not target.with_name("paper.pdf.part").exists()
     assert calls == [
         (
-            "https://eprint.iacr.org/2025/1",
+            "https://eprint.iacr.org/2025/1.pdf",
             {
                 "solve_cloudflare": True,
                 "timeout": 12345,
@@ -89,23 +96,51 @@ def test_iacr_scrapling_downloads_pdf(tmp_path, monkeypatch) -> None:
     ]
 
 
-def test_iacr_uses_chromium_from_path(tmp_path, monkeypatch) -> None:
+def test_iacr_defaults_to_bundled_chromium(tmp_path, monkeypatch) -> None:
     options = {}
 
     class FakeFetcher:
         @classmethod
         def fetch(cls, url, **kwargs):
-            action = kwargs.pop("page_action")
             options.update(kwargs)
-            action(_browser_page(b"%PDF-1.7"))
+            return _pdf_response(b"%PDF-1.7")
 
     monkeypatch.delenv("IACR_BROWSER_EXECUTABLE", raising=False)
     monkeypatch.delenv("SPIDER_PROXY", raising=False)
-    monkeypatch.setattr(iacr_platform.shutil, "which", lambda name: "/usr/bin/chromium")
 
-    download_iacr_pdf("https://eprint.iacr.org/2025/1.pdf", tmp_path / "paper.pdf", FakeFetcher)
+    download_iacr_pdf(
+        "https://eprint.iacr.org/2025/1.pdf", tmp_path / "paper.pdf", FakeFetcher
+    )
 
-    assert options["executable_path"] == "/usr/bin/chromium"
+    assert "executable_path" not in options
+    assert not Path(options["user_data_dir"]).exists()
+
+
+@pytest.mark.parametrize("navigation_error", [False, True])
+def test_iacr_download_survives_navigation_failure(
+    tmp_path, monkeypatch, navigation_error
+):
+    downloaded = tmp_path / "browser-download"
+    downloaded.write_bytes(b"%PDF-1.5 downloaded")
+    target = tmp_path / "paper.pdf"
+
+    class FakeFetcher:
+        @classmethod
+        def fetch(cls, url, **kwargs):
+            handlers = {}
+            kwargs["page_setup"](
+                SimpleNamespace(on=lambda event, fn: handlers.update({event: fn}))
+            )
+            handlers["download"](SimpleNamespace(path=lambda: str(downloaded)))
+            assert target.read_bytes() == downloaded.read_bytes()
+            if navigation_error:
+                raise RuntimeError("Navigation interrupted by download")
+            return _pdf_response(b"", status=403, content_type="text/html")
+
+    monkeypatch.delenv("SPIDER_PROXY", raising=False)
+    download_iacr_pdf("https://eprint.iacr.org/2026/2848.pdf", target, FakeFetcher)
+    assert target.read_bytes() == b"%PDF-1.5 downloaded"
+    assert not target.with_name("paper.pdf.part").exists()
 
 
 def test_authenticated_socks_proxy_uses_local_http_bridge(monkeypatch) -> None:
@@ -121,13 +156,13 @@ def test_authenticated_socks_proxy_uses_local_http_bridge(monkeypatch) -> None:
         socket.create_connection((host, int(port)), timeout=0.1)
 
 
-def test_iacr_rejects_non_pdf_response_without_overwriting(tmp_path, monkeypatch) -> None:
+def test_iacr_rejects_non_pdf_response_without_overwriting(
+    tmp_path, monkeypatch
+) -> None:
     class FakeFetcher:
         @classmethod
         def fetch(cls, url, **kwargs):
-            kwargs["page_action"](
-                _browser_page(b"<html>challenge</html>", content_type="text/html")
-            )
+            return _pdf_response(b"<html>challenge</html>", content_type="text/html")
 
     target = tmp_path / "paper.pdf"
     target.write_bytes(b"existing")
@@ -143,7 +178,7 @@ def test_iacr_rejects_http_error(tmp_path, monkeypatch) -> None:
     class FakeFetcher:
         @classmethod
         def fetch(cls, url, **kwargs):
-            kwargs["page_action"](_browser_page(b"", status=503))
+            return _pdf_response(b"", status=503)
 
     monkeypatch.delenv("SPIDER_PROXY", raising=False)
 

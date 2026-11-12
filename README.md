@@ -66,18 +66,18 @@ with `IACR_CAPTCHA_ATTEMPTS`.
 
 ## Install from PyPI
 
-The maintained runtime requires Python 3.12+. The IACR downloader automatically
-uses a `chromium` executable from `PATH`. On Arch Linux, install it from the
-official repository, then run the published package directly with `uvx`:
+The maintained runtime requires Python 3.12+. The IACR downloader uses
+Scrapling's bundled Chromium by default. Install its browser runtime, then run
+the published package directly with `uvx`:
 
 ```bash
-sudo pacman -S chromium
+uvx --from 'scrapling[fetchers]' scrapling install
 uvx apaper-mcp
 ```
 
-On systems without a packaged Chromium, install Scrapling's browser runtime
-once with `uvx --from 'scrapling[fetchers]' scrapling install`. Set
-`IACR_BROWSER_EXECUTABLE` to use a browser at a nonstandard path.
+Set `IACR_BROWSER_EXECUTABLE` to override the browser executable. IACR downloads
+use a temporary profile with `always_open_pdf_externally` enabled and capture
+the browser download directly instead of saving PDF-viewer HTML.
 
 To install the command for repeated use:
 
@@ -118,8 +118,7 @@ uv sync
 uv run apaper-mcp
 ```
 
-Install Chromium through your OS package manager. If no system Chromium is
-available, run `uv run scrapling install` instead.
+Install Scrapling's bundled browser with `uv run scrapling install`.
 
 Run tests with `uv run pytest`.
 

@@ -6,6 +6,17 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-11-12
+
+### Changed
+
+- Upgrade Scrapling to 0.5.1 and default IACR downloads to its bundled Chromium. (@isomoes)
+
+### Fixed
+
+- Download IACR PDFs through browser download events with the PDF viewer disabled, instead of saving viewer HTML. (@isomoes)
+- Preserve successful PDF downloads when subsequent browser navigation or challenge handling reports errors. (@isomoes)
+
 ## [0.3.5] - 2026-10-02
 
 ### Changed

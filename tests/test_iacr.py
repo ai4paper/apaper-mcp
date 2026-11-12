@@ -1,4 +1,5 @@
 import socket
+import httpx
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -7,6 +8,7 @@ from apaper_mcp.formatters import format_iacr_search_response
 import apaper_mcp.platforms.iacr as iacr_platform
 from apaper_mcp.platforms.iacr import (
     download_iacr_pdf,
+    fetch_iacr_html,
     parse_iacr_detail_html,
     parse_iacr_search_html,
 )
@@ -55,6 +57,49 @@ def _pdf_response(
     return SimpleNamespace(
         body=body, status=status, headers={"content-type": content_type}
     )
+
+
+def test_iacr_html_uses_http(monkeypatch):
+    monkeypatch.setenv("IACR_TIMEOUT_MS", "12345")
+    calls = []
+
+    def respond(request):
+        assert request.headers["user-agent"].startswith("Mozilla/5.0")
+        assert "text/html" in request.headers["accept"]
+        return httpx.Response(200, text="<h1>Results</h1>")
+
+    def client(**options):
+        calls.append(options)
+        return httpx.Client(transport=httpx.MockTransport(respond))
+
+    assert (
+        fetch_iacr_html("https://eprint.iacr.org/search?q=test", client)
+        == "<h1>Results</h1>"
+    )
+    assert calls == [{"timeout": 12.345}]
+
+
+@pytest.mark.parametrize(
+    "status, body, message",
+    [
+        (403, b"<title>Attention Required! | Cloudflare</title>", "Cloudflare blocked"),
+        (200, b'<form id="challenge-form"></form>', "Cloudflare blocked"),
+        (503, b"Unavailable", "HTTP 503"),
+    ],
+)
+def test_iacr_html_rejects_blocked_pages(monkeypatch, status, body, message):
+    monkeypatch.delenv("SPIDER_PROXY", raising=False)
+    monkeypatch.setenv("IACR_CAPTCHA_ATTEMPTS", "1")
+
+    def client(**options):
+        return httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(status, content=body)
+            )
+        )
+
+    with pytest.raises(RuntimeError, match=message):
+        fetch_iacr_html("https://eprint.iacr.org/search?q=test", client)
 
 
 def test_iacr_scrapling_downloads_pdf(tmp_path, monkeypatch) -> None:

@@ -31,9 +31,11 @@ CNKI tools require institutional access. On IP-based networks the session
 cookie is obtained automatically on first use — no manual login needed.
 
 IACR ePrint sits behind Cloudflare, which intermittently serves a JS bot
-challenge, most often on PDF downloads. The download tool uses Scrapling's
-stealth browser and built-in Cloudflare solver, and only publishes a file after
-the response bytes validate as a PDF.
+challenge. Search and paper details use HTTP requests; blocked searches report
+an error rather than empty results. Optional details are fetched concurrently
+(up to four requests) with a 10-second total budget, falling back to search
+summaries when slow or blocked. Downloads use Scrapling's stealth browser and
+Cloudflare solver, and only publish files after validating the PDF bytes.
 
 ## Proxy
 
@@ -66,7 +68,7 @@ with `IACR_CAPTCHA_ATTEMPTS`.
 
 ## Install from PyPI
 
-The maintained runtime requires Python 3.12+. The IACR downloader uses
+The maintained runtime requires Python 3.12+. IACR downloads use
 Scrapling's bundled Chromium by default. Install its browser runtime, then run
 the published package directly with `uvx`:
 

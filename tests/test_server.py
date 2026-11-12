@@ -2,6 +2,7 @@ import asyncio
 import time
 
 import httpx
+import pytest
 from mcp.client import Client
 
 import apaper_mcp.server as server
@@ -68,6 +69,73 @@ def test_iacr_download_uses_platform_downloader_directly(monkeypatch, tmp_path) 
     target = tmp_path / "iacr_2025_1.pdf"
     assert result == str(target)
     assert calls == [("https://eprint.iacr.org/2025/1.pdf", target)]
+
+
+@pytest.mark.parametrize("detail_fails", [False, True])
+def test_iacr_search_fetches_search_and_details(monkeypatch, detail_fails):
+    calls = []
+
+    def fetch(url):
+        calls.append(url)
+        if len(calls) == 1:
+            return '<div class="mb-4"><div class="d-flex"><a class="paperlink" href="/2025/1">2025/1</a></div><div class="ms-md-4"><strong>Search title</strong></div></div>'
+        if detail_fails:
+            raise RuntimeError("Blocked detail")
+        return '<h3 class="mb-3">Detailed title</h3>'
+
+    monkeypatch.setattr(server, "fetch_iacr_html", fetch)
+    result = asyncio.run(server.search_iacr_papers("lattice", year_min=2024))
+    assert "Search title" in result if detail_fails else "Detailed title" in result
+    assert calls == [
+        "https://eprint.iacr.org/search?q=lattice&revisedafter=2024",
+        "https://eprint.iacr.org/2025/1",
+    ]
+
+
+def test_iacr_search_failure_is_an_mcp_error(monkeypatch):
+    def fetch(url):
+        raise RuntimeError("Cloudflare blocked IACR")
+
+    monkeypatch.setattr(server, "fetch_iacr_html", fetch)
+
+    async def call_search():
+        async with Client(server.mcp) as client:
+            return await client.call_tool("search_iacr_papers", {"query": "lattice"})
+
+    result = asyncio.run(call_search())
+    assert result.is_error is True
+    assert "Cloudflare blocked IACR" in result.content[0].text
+
+
+def test_iacr_slow_details_return_summaries_within_budget(monkeypatch):
+    import threading
+
+    release = threading.Event()
+    started = []
+    monkeypatch.setattr(server, "_IACR_DETAIL_TIMEOUT", 0.1)
+
+    def fetch(url):
+        if "/search?" in url:
+            return "".join(
+                f'<div class="mb-4"><div class="d-flex"><a class="paperlink" href="/2025/{i}">2025/{i}</a></div><div class="ms-md-4"><strong>Title {i}</strong><span class="fst-italic">Alice</span></div></div>'
+                for i in range(10)
+            )
+        started.append(url)
+        release.wait(2)
+        raise RuntimeError("Detail unavailable")
+
+    monkeypatch.setattr(server, "fetch_iacr_html", fetch)
+
+    async def search():
+        try:
+            result = await asyncio.wait_for(server.search_iacr_papers("cipher"), 0.5)
+            assert len(started) == 4
+            assert "Found 10 IACR papers" in result
+            assert "Alice" in result
+        finally:
+            release.set()
+
+    asyncio.run(search())
 
 
 def test_iacr_download_defaults_to_downloads_directory(monkeypatch, tmp_path) -> None:

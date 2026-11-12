@@ -32,6 +32,7 @@ from .formatters import (
 from .platforms.iacr import (
     build_iacr_search_params,
     download_iacr_pdf,
+    fetch_iacr_html,
     parse_iacr_detail_html,
     parse_iacr_search_html,
 )
@@ -43,6 +44,7 @@ _arxiv_lock = asyncio.Lock()
 _arxiv_last_request = 0.0
 _cnki_cookie = ""
 _iacr_download_tasks: set[asyncio.Task] = set()
+_IACR_DETAIL_TIMEOUT = 10
 
 CNKI_LOGIN_URL = "https://login.cnki.net/TopLoginCore/api/loginapi/IpLoginFlushPo"
 CNKI_SEARCH_URL = "https://kns.cnki.net/kns8s/brief/grid"
@@ -266,24 +268,35 @@ async def search_iacr_papers(
 ) -> str:
     """Search academic papers from the IACR ePrint Archive."""
     minimum, maximum = _integer(year_min, "year_min"), _integer(year_max, "year_max")
-    response = await _get(
-        "https://eprint.iacr.org/search?"
-        + build_iacr_search_params(query, minimum, maximum)
-    )
-    if not response.is_success:
-        return format_iacr_search_response([], query, minimum, maximum)
-    papers = parse_iacr_search_html(response.text)[:max_results]
-    if fetch_details:
-        detailed = []
-        for paper in papers:
-            detail_response = await _get(paper["url"], timeout=30)
-            detail = (
-                parse_iacr_detail_html(detail_response.text, paper["paper_id"])
-                if detail_response.is_success
-                else None
+    try:
+        async with asyncio.timeout(int(os.getenv("IACR_TIMEOUT_MS", "30000")) / 1000):
+            html = await asyncio.to_thread(
+                fetch_iacr_html,
+                "https://eprint.iacr.org/search?"
+                + build_iacr_search_params(query, minimum, maximum),
             )
-            detailed.append(detail or paper)
-        papers = detailed
+    except Exception as error:
+        raise ToolError(f"IACR search failed: {error}") from error
+    papers = parse_iacr_search_html(html)[:max_results]
+    if fetch_details:
+        semaphore = asyncio.Semaphore(4)
+
+        async def enrich(paper):
+            try:
+                # Queue time counts toward the shared enrichment budget.
+                async with asyncio.timeout(_IACR_DETAIL_TIMEOUT):
+                    async with semaphore:
+                        detail_html = await asyncio.to_thread(
+                            fetch_iacr_html, paper["url"]
+                        )
+                detail = parse_iacr_detail_html(detail_html, paper["paper_id"])
+            except Exception:
+                detail = None
+            return (
+                {**paper, **{k: v for k, v in detail.items() if v}} if detail else paper
+            )
+
+        papers = await asyncio.gather(*(enrich(paper) for paper in papers))
     return format_iacr_search_response(papers, query, minimum, maximum)
 
 

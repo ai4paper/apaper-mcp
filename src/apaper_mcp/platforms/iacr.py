@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 from bs4 import BeautifulSoup
 from scrapling.fetchers import StealthyFetcher
 
-from ..proxy import selenium_proxy_from_env
+from ..proxy import make_client, selenium_proxy_from_env
 
 
 def build_iacr_search_params(
@@ -27,6 +27,36 @@ def _scrapling_proxy(proxy: str | None) -> str | None:
     if proxy is None or "://" in proxy:
         return proxy
     return f"http://{proxy}"
+
+
+def fetch_iacr_html(url: str, fetcher=None) -> str:
+    """Fetch HTML over HTTP without starting a browser."""
+    with (fetcher or make_client)(
+        timeout=int(os.getenv("IACR_TIMEOUT_MS", "30000")) / 1000
+    ) as client:
+        response = client.get(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+        )
+    html = response.text
+    soup = BeautifulSoup(html, "html.parser")
+    title = soup.title.get_text().lower() if soup.title else ""
+    if (
+        "just a moment" in title
+        or "cloudflare" in title
+        or soup.select_one("#challenge-form, #cf-error-details")
+    ):
+        raise RuntimeError(
+            f"Cloudflare blocked IACR at {url}; try another SPIDER_PROXY "
+            "or open the URL in a browser"
+        )
+    if not response.is_success:
+        raise RuntimeError(f"IACR returned HTTP {response.status_code} for {url}")
+    return html
 
 
 def download_iacr_pdf(pdf_url: str, target: Path, fetcher=None) -> None:
